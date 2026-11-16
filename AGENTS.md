@@ -31,7 +31,7 @@ Decided by the product owner on 2026-11-16:
 
 1. Pull the latest `main`.
 2. Read `docs/WORKLOG.md` to see what is done and what is in progress.
-3. Code changes go on a branch and a pull request; the API tests must pass before merging.
+3. Code changes go on a branch and a pull request; the API tests must pass before merging. Claude merges its own pull requests once the checks pass (owner decision, 2026-11-16).
 4. Never force-push. Never rewrite or delete another contributor's files.
 
 ## 4. Disagreements / عند الاختلاف
