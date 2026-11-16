@@ -35,7 +35,30 @@ class LoginIn(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    # Seconds until the access token expires; use the refresh token to get a new pair.
+    expires_in: int
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str = Field(min_length=10, max_length=200)
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+    _email = field_validator("email")(_clean_email)
+
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class UserOut(BaseModel):

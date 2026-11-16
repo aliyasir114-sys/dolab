@@ -34,3 +34,5 @@ class FailureLimiter:
 
 
 login_limiter = FailureLimiter()
+# Reset emails per address: at most 3 an hour, so the endpoint cannot be used to flood an inbox.
+reset_limiter = FailureLimiter(max_failures=3, window_seconds=3600)
