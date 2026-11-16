@@ -23,6 +23,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: datetime) -> datetime:
+    """SQLite returns naive datetimes; treat them as UTC so comparisons work on every database."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -31,8 +36,41 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     locale: Mapped[str] = mapped_column(String(5), default="ar")
     account_type: Mapped[str] = mapped_column(String(20), default="individual")
+    # Raised on password reset; access tokens carrying an older value stop working at once.
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class RefreshToken(Base):
+    """A long-lived sign-in session. Only a hash of the token is stored.
+
+    Each use replaces the token with a new one in the same family. If a replaced token is
+    presented again, someone copied it, so the whole family is revoked.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[str] = mapped_column(_ID, primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(_ID, ForeignKey("users.id"), index=True)
+    family_id: Mapped[str] = mapped_column(_ID, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PasswordResetToken(Base):
+    """Single-use, short-lived. Only a hash of the token is stored."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(_ID, primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(_ID, ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Profile(Base):

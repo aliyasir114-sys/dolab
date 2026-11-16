@@ -1,14 +1,73 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, HTTPException, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.orm import Session
+
+from ..config import settings
 
 from ..deps import CurrentUser, Db
-from ..models import Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, Profile, User, WearLog
-from ..ratelimit import login_limiter
-from ..schemas import ItemOut, LoginIn, ProfileBody, RegisterIn, TokenOut, UserOut
+from ..mailer import send_password_reset
+from ..models import (
+    Donation,
+    DonationItem,
+    Item,
+    ItemPhoto,
+    ItemStatusChange,
+    PasswordResetToken,
+    Profile,
+    RefreshToken,
+    User,
+    WearLog,
+    as_utc,
+    new_id,
+    utcnow,
+)
+from ..ratelimit import login_limiter, reset_limiter
+from ..schemas import (
+    ChangePasswordIn,
+    ForgotPasswordIn,
+    ItemOut,
+    LoginIn,
+    ProfileBody,
+    RefreshIn,
+    RegisterIn,
+    ResetPasswordIn,
+    TokenOut,
+    UserOut,
+)
 from ..services import delete_photo_files
-from ..security import create_token, hash_password, verify_password
+from ..security import create_token, hash_password, new_secret_token, token_hash, verify_password
 
 router = APIRouter(tags=["account"])
+
+_INVALID_REFRESH = HTTPException(status.HTTP_401_UNAUTHORIZED, "session expired, sign in again")
+
+
+def _issue_tokens(db: Session, user: User, family_id: str | None = None) -> TokenOut:
+    """Create an access token and a new refresh token (in a new or existing family)."""
+    refresh = new_secret_token()
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            family_id=family_id or new_id(),
+            token_hash=token_hash(refresh),
+            expires_at=utcnow() + timedelta(days=settings.refresh_days),
+        )
+    )
+    return TokenOut(
+        access_token=create_token(user.id, user.token_version),
+        refresh_token=refresh,
+        expires_in=settings.token_minutes * 60,
+    )
+
+
+def _revoke_all_sessions(db: Session, user_id: str) -> None:
+    db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
 
 
 @router.post("/auth/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -35,7 +94,109 @@ def login(body: LoginIn, db: Db) -> TokenOut:
         login_limiter.record_failure(body.email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong email or password")
     login_limiter.clear(body.email)
-    return TokenOut(access_token=create_token(user.id))
+    tokens = _issue_tokens(db, user)
+    db.commit()
+    return tokens
+
+
+@router.post("/auth/refresh", response_model=TokenOut)
+def refresh(body: RefreshIn, db: Db) -> TokenOut:
+    """Swap a refresh token for a new pair. Each refresh token works once."""
+    stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash(body.refresh_token)))
+    if stored is None:
+        raise _INVALID_REFRESH
+    if stored.revoked_at is not None:
+        # A used token came back: it was copied. End every session descended from that sign-in.
+        db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=utcnow())
+        )
+        db.commit()
+        raise _INVALID_REFRESH
+    if as_utc(stored.expires_at) <= utcnow():
+        raise _INVALID_REFRESH
+    user = db.get(User, stored.user_id)
+    if user is None:
+        raise _INVALID_REFRESH
+    stored.revoked_at = utcnow()
+    tokens = _issue_tokens(db, user, family_id=stored.family_id)
+    db.commit()
+    return tokens
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(body: RefreshIn, db: Db) -> Response:
+    """End one session (the sign-in this refresh token belongs to). Unknown tokens are ignored."""
+    stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash(body.refresh_token)))
+    if stored is not None:
+        db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=utcnow())
+        )
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/auth/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+def forgot_password(body: ForgotPasswordIn, db: Db) -> dict[str, str]:
+    """Email a single-use reset code. The answer is the same whether or not the email is registered."""
+    answer = {"detail": "if this email is registered, a reset code has been sent"}
+    if reset_limiter.blocked(body.email):
+        return answer
+    reset_limiter.record_failure(body.email)
+    user = db.scalar(select(User).where(User.email == body.email))
+    if user is None:
+        return answer
+    # Only the newest code works.
+    db.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=utcnow())
+    )
+    code = new_secret_token()
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash(code),
+            expires_at=utcnow() + timedelta(minutes=settings.reset_minutes),
+        )
+    )
+    db.commit()
+    send_password_reset(user.email, code, user.locale)
+    return answer
+
+
+@router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+def reset_password(body: ResetPasswordIn, db: Db) -> Response:
+    """Set a new password with a reset code. Signs the user out everywhere."""
+    stored = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash(body.token)))
+    if stored is None or stored.used_at is not None or as_utc(stored.expires_at) <= utcnow():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "reset code is invalid or has expired")
+    user = db.get(User, stored.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "reset code is invalid or has expired")
+    stored.used_at = utcnow()
+    user.password_hash = hash_password(body.new_password)
+    user.token_version += 1
+    _revoke_all_sessions(db, user.id)
+    db.commit()
+    login_limiter.clear(user.email)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/me/password", response_model=TokenOut)
+def change_password(body: ChangePasswordIn, user: CurrentUser, db: Db) -> TokenOut:
+    """Change the password while signed in. Other sessions are signed out; this one gets new tokens."""
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "current password is wrong")
+    user.password_hash = hash_password(body.new_password)
+    user.token_version += 1
+    _revoke_all_sessions(db, user.id)
+    tokens = _issue_tokens(db, user)
+    db.commit()
+    return tokens
 
 
 @router.get("/me", response_model=UserOut)
@@ -107,6 +268,8 @@ def delete_account(user: CurrentUser, db: Db) -> Response:
     db.execute(delete(ItemStatusChange).where(ItemStatusChange.user_id == user.id))
     db.execute(delete(Item).where(Item.user_id == user.id))
     db.execute(delete(Profile).where(Profile.user_id == user.id))
+    db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user.id))
     db.execute(delete(User).where(User.id == user.id))
     db.commit()
     delete_photo_files(photos)

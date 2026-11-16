@@ -19,7 +19,8 @@ All endpoints are under `/v1` (only `/health` is at the root).
 
 | Area | Endpoints | PRD |
 |---|---|---|
-| Account | `POST /auth/register`, `POST /auth/login`, `GET /me`, `GET /me/export`, `DELETE /me` | A1, A6 |
+| Account | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `GET /me/export`, `DELETE /me` | A1, A6 |
+| Password | `POST /auth/password/forgot`, `POST /auth/password/reset`, `POST /me/password` | A5 |
 | Profile | `GET/PUT/DELETE /me/profile` (all fields optional, never asked at sign-up) | PROF-1 |
 | Wardrobe | `GET/POST /items`, `GET/PATCH/DELETE /items/{id}`, `POST /items/{id}/wear`, `GET /items/{id}/history` | W7–W9, S4 |
 | Photos | `POST/GET /items/{id}/photos`, `DELETE /items/{id}/photos/{photo_id}`, `GET /media/{photo_id}/{variant}` | W1 |
@@ -37,11 +38,12 @@ All endpoints are under `/v1` (only `/health` is at the root).
 
 ## Not implemented yet
 
-Google and phone sign-in, password reset, refresh tokens, automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin, database migrations (tables are created on startup for now).
+Google and phone sign-in, a real email provider (reset codes are only logged in development), automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin, database migrations (tables are created on startup for now).
 
 ## Security notes
 
-- Passwords are hashed with scrypt; tokens are signed JWTs. `DOLAB_JWT_SECRET` must be set in production (the app refuses to start without it).
+- Passwords are hashed with scrypt. Access tokens are signed JWTs that last 15 minutes; refresh tokens are random, stored only as hashes, last 30 days, work once each, and a reused one ends that whole sign-in (theft detection).
+- Password reset codes are random, single-use, expire after 30 minutes, and the request answers the same whether or not the email is registered (at most 3 emails an hour per address). Resetting or changing the password signs the user out everywhere else. `DOLAB_JWT_SECRET` must be set in production (the app refuses to start without it).
 - Every item, donation and profile query is scoped to the signed-in user. Another user's item id answers 404.
 - Body measurements live in a separate `profiles` table and are returned only to their owner.
 - Five wrong passwords for one email lock sign-in for 15 minutes. This limiter is in-memory and protects one process only; it must move to a shared store before running several workers.

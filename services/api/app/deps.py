@@ -24,11 +24,12 @@ def get_current_user(
     )
     if credentials is None:
         raise unauthorized
-    user_id = read_token(credentials.credentials)
-    if user_id is None:
+    claims = read_token(credentials.credentials)
+    if claims is None:
         raise unauthorized
+    user_id, version = claims
     user = db.get(User, user_id)
-    if user is None:
+    if user is None or user.token_version != version:
         raise unauthorized
     return user
 
