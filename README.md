@@ -5,6 +5,8 @@ A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions f
 
 **الحالة / Status:** نموذج تفاعلي للشاشات (تصميم فقط، لا يوجد كود تطبيق بعد) — design prototype only, no application code yet.
 
+**ابدأ من هنا / Start here:** [`docs/PRD.md`](docs/PRD.md) المتطلبات · [`AGENTS.md`](AGENTS.md) قواعد العمل المشترك · [`docs/WORKLOG.md`](docs/WORKLOG.md) من يعمل على ماذا
+
 ## القرارات المثبتة / Decisions
 
 | القرار | الاختيار |
