@@ -10,21 +10,28 @@ This repository is edited by more than one AI assistant (Claude, ChatGPT) and by
 - Colours are black `#080808` and white `#F5F5F5` with greys only. No accent colours.
 - Arabic (RTL) and English (LTR) are both first-class.
 
-## 2. Ownership / من يملك ماذا
+## 2. Roles / الأدوار
 
-| Path | Owner | Others may |
-|---|---|---|
-| `design/` | Claude (exported from the design canvas) | read only — edits here are overwritten on the next export |
-| `docs/PRD.md` | Claude | propose changes via `docs/proposals/` |
-| `README.md`, `AGENTS.md` | shared | small additive edits |
-| `docs/proposals/` | anyone | add new files freely |
-| `web/`, `android/`, `backend/` | unassigned — claim in `docs/WORKLOG.md` before starting | — |
+Decided by the product owner on 2026-11-16:
+
+- **Claude implements the whole project**: design, documentation and all code (`design/`, `docs/`, `services/`, `apps/`).
+- **ChatGPT is a consultant only**: it reviews and advises. It does not commit code or edit existing files. Its advice goes in `docs/proposals/<short-name>.md` or as review comments on pull requests.
+- **Ali (product owner)** decides when advice and implementation disagree.
+
+كلود ينفّذ المشروع كله. ChatGPT مستشار فقط: يراجع وينصح عبر `docs/proposals/` أو تعليقات على طلبات الدمج، ولا يعدّل الملفات. القرار النهائي لمالك المنتج.
+
+| Path | Contents |
+|---|---|
+| `design/` | Screen sources exported from the design canvas (edits here are overwritten on the next export) |
+| `docs/` | PRD, work log, proposals |
+| `services/api/` | Backend (FastAPI) |
+| `apps/web/`, `apps/mobile/` | Next.js site and Flutter app (not started) |
 
 ## 3. Before you write / قبل أي تعديل
 
 1. Pull the latest `main`.
-2. Read `docs/WORKLOG.md`. If someone has claimed the area, do not work on it.
-3. Add a line to `docs/WORKLOG.md` saying what you are about to do.
+2. Read `docs/WORKLOG.md` to see what is done and what is in progress.
+3. Code changes go on a branch and a pull request; the API tests must pass before merging.
 4. Never force-push. Never rewrite or delete another contributor's files.
 
 ## 4. Disagreements / عند الاختلاف

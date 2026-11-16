@@ -3,7 +3,7 @@
 دولاب إلكتروني ذكي: يسجّل ملابسك، يقترح إطلالات يومية مما تملك، ويتيح تجربتها افتراضياً، مع سوق داخلي للملابس وقسم لتراث أزياء العالم.
 A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions from what you own, try them on virtually, plus an in-app fashion market and a world-heritage dress section.
 
-**الحالة / Status:** نموذج تفاعلي للشاشات (تصميم فقط، لا يوجد كود تطبيق بعد) — design prototype only, no application code yet.
+**الحالة / Status:** نموذج تفاعلي للشاشات + الإصدار 0.1 من الـ Backend ([`services/api`](services/api/README.md)). لا يوجد موقع أو تطبيق Android بعد — design prototype plus backend v0.1; no web or Android app yet.
 
 **ابدأ من هنا / Start here:** [`docs/PRD.md`](docs/PRD.md) المتطلبات · [`AGENTS.md`](AGENTS.md) قواعد العمل المشترك · [`docs/WORKLOG.md`](docs/WORKLOG.md) من يعمل على ماذا
 

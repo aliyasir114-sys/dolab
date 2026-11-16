@@ -1,0 +1,30 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.db
+
+# node / next.js
+node_modules/
+.next/
+out/
+
+# flutter / android
+.dart_tool/
+build/
+*.iml
+local.properties
+*.keystore
+*.jks
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
