@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',sans-serif}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+</style>
+</helmet>
+<div dir="ltr" style="width: 390px; height: 844px; box-sizing: border-box; padding: 32px 24px; background: #080808; color: #F5F5F5; display: flex; flex-direction: column; gap: 28px">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<span style="font-family: 'Space Grotesk', sans-serif; font-size: 11px; letter-spacing: 3px; color: #A8A8A8">SUDANESE MADE</span>
+<a href="Main.dc.html" style="font-size: 14px; min-height: 44px; min-width: 44px; padding: 0 10px; display: flex; align-items: center; justify-content: center; border: 1px solid #5E5E5E">عربي</a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 24px">
+<h1 style="margin: 0; font-size: 64px; line-height: 1.1; font-family: 'Space Grotesk', sans-serif; font-weight: 700">DOLAB</h1>
+<p style="margin: 12px 0 0; font-size: 16px; line-height: 1.7; color: #A8A8A8">Your wardrobe in your pocket. Style starts with what you own.</p>
+</div>
+<form style="display: flex; flex-direction: column; gap: 14px; margin: 0">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="em" style="font-size: 13px; color: #A8A8A8">Email</label>
+<input id="em" type="email" style="height: 48px; box-sizing: border-box; padding: 0 14px; background: transparent; border: 1px solid #5E5E5E; color: #F5F5F5; font-size: 16px; font-family: inherit">
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="pw" style="font-size: 13px; color: #A8A8A8">Password</label>
+<input id="pw" type="password" style="height: 48px; box-sizing: border-box; padding: 0 14px; background: transparent; border: 1px solid #5E5E5E; color: #F5F5F5; font-size: 16px; font-family: inherit">
+</div>
+<a href="HomeEn.dc.html" style="height: 52px; display: flex; align-items: center; justify-content: center; background: #F5F5F5; color: #080808; font-size: 16px; font-weight: 700; margin-top: 6px">Sign in</a>
+</form>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<a href="HomeEn.dc.html" style="height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid #5E5E5E; font-size: 15px">Continue with Google</a>
+<a href="HomeEn.dc.html" style="height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid #5E5E5E; font-size: 15px">Continue with phone number</a>
+</div>
+<p style="margin: auto 0 0; font-size: 12px; line-height: 1.7; color: #A8A8A8; text-align: center">One account for web and app — your wardrobe is always saved and in sync.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Item card</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',sans-serif}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+</style>
+</helmet>
+<div dir="ltr" style="width: 390px; height: 844px; box-sizing: border-box; background: #F5F5F5; color: #080808; display: flex; flex-direction: column">
+<div style="flex: 1; min-height: 0; padding: 8px 20px 0; display: flex; flex-direction: column; gap: 14px">
+<a href="WardrobeEn.dc.html" style="height: 44px; display: flex; align-items: center; font-size: 14px; font-weight: 600; align-self: flex-start">← Wardrobe</a>
+<div style="height: 190px; background: #E6E6E6; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #5E5E5E">Item photo, background removed</div>
+<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 700">Classic white shirt</h1>
+<span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">DLB-000124</span>
+</div>
+<span style="font-size: 12px; font-weight: 600; padding: 4px 12px; background: #080808; color: #F5F5F5">Available</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: #D9D9D9; border: 1px solid #D9D9D9">
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Colour</span><span style="font-size: 15px; font-weight: 600">White</span></div>
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Type</span><span style="font-size: 15px; font-weight: 600">Formal / everyday</span></div>
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Times worn</span><span style="font-size: 15px; font-weight: 600">18</span></div>
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Last worn</span><span style="font-size: 15px; font-weight: 600">3 days ago</span></div>
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Age since purchase</span><span style="font-size: 15px; font-weight: 600">8 months</span></div>
+<div style="background: #FFFFFF; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 11px; color: #5E5E5E">Status</span><span style="font-size: 15px; font-weight: 600">Very good</span></div>
+</div>
+<div style="display: flex; gap: 12px">
+<a href="TryOnEn.dc.html" style="flex: 1; height: 48px; display: flex; align-items: center; justify-content: center; background: #080808; color: #F5F5F5; font-size: 15px; font-weight: 700">Try on virtually</a>
+<a href="SellEn.dc.html" style="flex: 1; height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid #080808; font-size: 15px; font-weight: 700">List for sale</a>
+</div>
+<a href="DonateEn.dc.html" style="height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid #080808; font-size: 15px; font-weight: 700">Donate this piece</a>
+<p style="margin: 0; font-size: 12px; line-height: 1.6; color: #5E5E5E">Colour read from the photo with high confidence — you can confirm or correct it.</p>
+</div>
+<nav aria-label="Main navigation" style="display: flex; height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #D9D9D9; font-size: 11px">
+<a href="HomeEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 11l9-7 9 7v9H3z"></path></svg>Home</a>
+<a href="WardrobeEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #080808; font-weight: 700; box-shadow: inset 0 2px 0 #080808"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18"></rect><path d="M12 3v18M9.5 11v2M14.5 11v2"></path></svg>Wardrobe</a>
+<a href="StylistEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"></path></svg>Stylist</a>
+<a href="MarketEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 8h14l-1 13H6zM9 8V6a3 3 0 016 0v2"></path></svg>Market</a>
+<a href="HeritageEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l9 9-9 9-9-9z"></path><path d="M12 8l4 4-4 4-4-4z"></path></svg>Heritage</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

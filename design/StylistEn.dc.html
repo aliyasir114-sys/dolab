@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stylist</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',sans-serif}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+</style>
+</helmet>
+<div dir="ltr" style="width: 390px; height: 844px; box-sizing: border-box; background: #F5F5F5; color: #080808; display: flex; flex-direction: column">
+<div style="flex: 1; min-height: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 12px; color: #5E5E5E">Stylist</span>
+<h1 style="margin: 0; font-size: 26px; font-weight: 700">Today's look</h1>
+</div>
+<div style="display: flex; gap: 8px">
+<sc-for list="{{occasions}}" as="o" hint-placeholder-count="3">
+<button type="button" onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="flex: 1; height: 44px; border: 1px solid #080808; background: {{o.bg}}; color: {{o.fg}}; font-size: 14px; font-weight: 600; font-family: inherit">{{o.label}}</button>
+</sc-for>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #D9D9D9; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 8px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 700">{{look.title}}</h2>
+<span style="font-size: 11px; font-weight: 600; padding: 3px 8px; border: 1px solid #080808; background: {{look.badgeBg}}; color: {{look.badgeFg}}">{{look.badge}}</span>
+</div>
+<sc-for list="{{look.pieces}}" as="p" hint-placeholder-count="3">
+<div style="display: flex; align-items: center; gap: 12px">
+<div style="width: 60px; height: 60px; flex-shrink: 0; background: #E6E6E6; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #5E5E5E">Photo</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 15px; font-weight: 600">{{p.name}}</span>
+<span style="font-size: 12px; color: #5E5E5E">{{p.source}}</span>
+</div>
+</div>
+</sc-for>
+<p style="margin: 0; font-size: 13px; line-height: 1.7; color: #5E5E5E">{{look.note}}</p>
+</div>
+<button type="button" onClick="{{wear}}" style="height: 52px; border: 0; background: #080808; color: #F5F5F5; font-size: 16px; font-weight: 700; font-family: inherit">{{wearLabel}}</button>
+<a href="TryOnEn.dc.html" style="height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid #080808; font-size: 15px; font-weight: 700">Try this look virtually</a>
+</div>
+<nav aria-label="Main navigation" style="display: flex; height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #D9D9D9; font-size: 11px">
+<a href="HomeEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 11l9-7 9 7v9H3z"></path></svg>Home</a>
+<a href="WardrobeEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18"></rect><path d="M12 3v18M9.5 11v2M14.5 11v2"></path></svg>Wardrobe</a>
+<a href="StylistEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #080808; font-weight: 700; box-shadow: inset 0 2px 0 #080808"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"></path></svg>Stylist</a>
+<a href="MarketEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 8h14l-1 13H6zM9 8V6a3 3 0 016 0v2"></path></svg>Market</a>
+<a href="HeritageEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l9 9-9 9-9-9z"></path><path d="M12 8l4 4-4 4-4-4z"></path></svg>Heritage</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+constructor(props) { super(props); this.state = { occ: 'Work', worn: false }; }
+renderVals() {
+const own = 'From your wardrobe · available';
+const looks = {
+'Work': { title: 'Classic smart look', full: true, note: 'A practical, smart look for meetings and work.',
+pieces: [{ name: 'White shirt', source: own }, { name: 'Black trousers', source: own }, { name: 'Black shoes', source: own }] },
+'Occasion': { title: 'Heritage occasion look', full: false, note: 'A shawl completes this look and three others in your wardrobe.',
+pieces: [{ name: 'White jalabiya', source: own }, { name: 'Turban', source: own }, { name: 'Shawl', source: 'Missing · available in Dolab Market' }] },
+'Everyday': { title: 'Relaxed everyday look', full: true, note: 'Pieces you have not worn in a while — a good time to bring them back.',
+pieces: [{ name: 'Grey T-shirt', source: own }, { name: 'Jeans', source: own }, { name: 'White sneakers', source: own }] }
+};
+const st = this.state || {};
+const cur = st.occ || 'Work';
+const l = looks[cur];
+const look = { ...l, badge: l.full ? 'Complete' : '1 piece missing', badgeBg: l.full ? '#080808' : '#FFFFFF', badgeFg: l.full ? '#F5F5F5' : '#080808' };
+const occasions = Object.keys(looks).map((label) => ({
+label, on: label === cur,
+bg: label === cur ? '#080808' : 'transparent',
+fg: label === cur ? '#F5F5F5' : '#080808',
+pick: () => this.setState({ occ: label, worn: false })
+}));
+return { look, occasions, wear: () => this.setState({ worn: true }), wearLabel: st.worn ? 'Wear logged in your wardrobe' : 'I'll wear this today' };
+}
+}
+</script>
+</body>
+</html>

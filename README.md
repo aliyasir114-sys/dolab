@@ -42,6 +42,9 @@ A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions f
 | `Merchant.dc.html` | لوحة التاجر | المخزون، تبديل متاح/غير متاح، المنتجات قيد المراجعة |
 | `Admin.dc.html` | لوحة تحكم الإدارة (موقع، 1280 عرضاً) | طابور مراجعة المنتجات: اعتماد/رفض |
 
+كل شاشة لها نسخة إنجليزية (LTR) بالاسم نفسه مع اللاحقة `En`، مثل `WardrobeEn.dc.html`. المجموع 28 ملفاً: 14 بالعربية و14 بالإنجليزية.
+Every screen has an English (LTR) twin with the `En` suffix. The English files are generated from the Arabic ones; change the Arabic source first.
+
 > ملفات `.dc.html` هي مصدر لوحة التصميم؛ تعتمد على ملف `support.js` الخاص باللوحة ولا تُعرض كصفحات مستقلة. استخدمها مرجعاً للبنية والنصوص والألوان والمقاسات (كل شاشة 390×844).
 > The `.dc.html` files are design-canvas sources and do not render standalone; treat them as a reference for structure, copy, colors and sizes.
 
@@ -82,4 +85,4 @@ A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions f
 
 ## لم يُصمَّم بعد / Not yet designed
 
-نسخة الموقع (سطح المكتب)، بقية الشاشات بالإنجليزية.
+نسخة الموقع (سطح المكتب) لشاشات المستخدم.
