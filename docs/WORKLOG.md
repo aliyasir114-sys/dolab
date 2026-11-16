@@ -11,6 +11,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-16 | Claude | شاشتا لوحة التاجر ولوحة تحكم الإدارة (15 شاشة إجمالاً) | `design/` | تم |
 | 2026-11-16 | Claude | النسخ الإنجليزية لكل الشاشات (`*En.dc.html`) | `design/` | تم |
 | 2026-11-16 | Claude | التراث: قائمة دول بدل المناطق؛ أيقونة الأهرامات النوبية بدل عبارة SUDANESE MADE | `design/`, `docs/PRD.md` | تم |
+| 2026-11-16 | Claude | صفحات الموقع: الرئيسية، دولابي، السوق (عربي وإنجليزي) | `design/Web*.dc.html` | تم |
 
 ## مهام مفتوحة لم يأخذها أحد / Open, unclaimed
 
@@ -19,4 +20,4 @@ Add a line before you start (in progress) and update it when done.
 - هيكل مشروع Backend (FastAPI).
 - هيكل تطبيق Flutter مع دعم RTL/LTR.
 - هيكل موقع Next.js.
-- تصميم: نسخة سطح المكتب لشاشات المستخدم (Claude سيأخذها تالياً).
+- تصميم: نسخة الموقع لبقية الشاشات (Claude).
