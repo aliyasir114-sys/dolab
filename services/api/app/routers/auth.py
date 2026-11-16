@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import delete, select
 
 from ..deps import CurrentUser, Db
-from ..models import Donation, DonationItem, Item, ItemStatusChange, Profile, User, WearLog
+from ..models import Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, Profile, User, WearLog
 from ..ratelimit import login_limiter
 from ..schemas import ItemOut, LoginIn, ProfileBody, RegisterIn, TokenOut, UserOut
+from ..services import delete_photo_files
 from ..security import create_token, hash_password, verify_password
 
 router = APIRouter(tags=["account"])
@@ -78,12 +79,27 @@ def export_data(user: CurrentUser, db: Db) -> dict:
             for c in changes
         ],
         "donations": donations,
+        # Photo files are downloaded through the signed links on each item's photo list.
+        "photos": [
+            {
+                "id": p.id,
+                "item_id": p.item_id,
+                "content_type": p.content_type,
+                "width": p.width,
+                "height": p.height,
+                "size_bytes": p.size_bytes,
+                "created_at": p.created_at.isoformat(),
+            }
+            for p in db.scalars(select(ItemPhoto).where(ItemPhoto.user_id == user.id).order_by(ItemPhoto.created_at))
+        ],
     }
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(user: CurrentUser, db: Db) -> Response:
-    """Delete the account and everything it owns (PRD A6)."""
+    """Delete the account and everything it owns, including photo files (PRD A6)."""
+    photos = list(db.scalars(select(ItemPhoto).where(ItemPhoto.user_id == user.id)))
+    db.execute(delete(ItemPhoto).where(ItemPhoto.user_id == user.id))
     donation_ids = select(Donation.id).where(Donation.user_id == user.id)
     db.execute(delete(DonationItem).where(DonationItem.donation_id.in_(donation_ids)))
     db.execute(delete(Donation).where(Donation.user_id == user.id))
@@ -93,6 +109,7 @@ def delete_account(user: CurrentUser, db: Db) -> Response:
     db.execute(delete(Profile).where(Profile.user_id == user.id))
     db.execute(delete(User).where(User.id == user.id))
     db.commit()
+    delete_photo_files(photos)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

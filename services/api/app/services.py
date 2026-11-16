@@ -1,7 +1,11 @@
 """Small rules shared by several routers."""
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Item, ItemStatusChange
+from .media import signed_path
+from .models import Item, ItemPhoto, ItemStatusChange
+from .schemas import ItemOut
+from .storage import storage
 
 
 def set_status(db: Session, item: Item, new_status: str, *, initial: bool = False) -> None:
@@ -17,3 +21,35 @@ def set_status(db: Session, item: Item, new_status: str, *, initial: bool = Fals
         )
     )
     item.status = new_status
+
+
+def delete_photo_files(photos: list[ItemPhoto]) -> None:
+    """Remove the stored files of the given photos. Call after the database change is committed."""
+    for photo in photos:
+        storage.delete(photo.original_key)
+        storage.delete(photo.thumb_key)
+
+
+def items_out(db: Session, items: list[Item]) -> list[ItemOut]:
+    """Items as API responses, each with a signed link to its first photo's thumbnail."""
+    if not items:
+        return []
+    photos = db.scalars(
+        select(ItemPhoto)
+        .where(ItemPhoto.item_id.in_([item.id for item in items]))
+        .order_by(ItemPhoto.created_at, ItemPhoto.id)
+    )
+    cover: dict[str, str] = {}
+    for photo in photos:
+        cover.setdefault(photo.item_id, photo.id)
+    result = []
+    for item in items:
+        out = ItemOut.model_validate(item)
+        if item.id in cover:
+            out.cover_thumb_url = signed_path(cover[item.id], "thumb")
+        result.append(out)
+    return result
+
+
+def item_out(db: Session, item: Item) -> ItemOut:
+    return items_out(db, [item])[0]

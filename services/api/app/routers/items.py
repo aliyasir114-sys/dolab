@@ -5,9 +5,9 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import delete, func, select
 
 from ..deps import CurrentUser, Db
-from ..models import DonationItem, Item, ItemStatusChange, WearLog, new_id
+from ..models import DonationItem, Item, ItemPhoto, ItemStatusChange, WearLog, new_id
 from ..schemas import ItemIn, ItemOut, ItemPatch, ItemStatus, WearIn
-from ..services import set_status
+from ..services import delete_photo_files, item_out, items_out, set_status
 
 router = APIRouter(prefix="/items", tags=["wardrobe"])
 
@@ -33,7 +33,7 @@ def list_items(
     color: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> list[Item]:
+) -> list[ItemOut]:
     """List the user's items, oldest first. The total is returned in the X-Total-Count header."""
     conditions = [Item.user_id == user.id]
     if status_filter is not None:
@@ -45,27 +45,27 @@ def list_items(
     total = db.scalar(select(func.count()).select_from(Item).where(*conditions))
     response.headers["X-Total-Count"] = str(total)
     query = select(Item).where(*conditions).order_by(Item.added_at, Item.id).limit(limit).offset(offset)
-    return list(db.scalars(query))
+    return items_out(db, list(db.scalars(query)))
 
 
 @router.post("", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
-def create_item(body: ItemIn, user: CurrentUser, db: Db) -> Item:
+def create_item(body: ItemIn, user: CurrentUser, db: Db) -> ItemOut:
     data = body.model_dump()
     first_status = data.pop("status")
     item = Item(id=new_id(), user_id=user.id, wear_count=0, status=first_status, **data)
     db.add(item)
     set_status(db, item, first_status, initial=True)
     db.commit()
-    return item
+    return item_out(db, item)
 
 
 @router.get("/{item_id}", response_model=ItemOut)
-def get_item(item_id: str, user: CurrentUser, db: Db) -> Item:
-    return _own_item(db, user.id, item_id)
+def get_item(item_id: str, user: CurrentUser, db: Db) -> ItemOut:
+    return item_out(db, _own_item(db, user.id, item_id))
 
 
 @router.patch("/{item_id}", response_model=ItemOut)
-def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> Item:
+def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> ItemOut:
     item = _own_item(db, user.id, item_id)
     for field, value in body.model_dump(exclude_unset=True).items():
         if value is None and field not in _NULLABLE:
@@ -75,7 +75,7 @@ def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> Ite
         else:
             setattr(item, field, value)
     db.commit()
-    return item
+    return item_out(db, item)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -84,13 +84,17 @@ def delete_item(item_id: str, user: CurrentUser, db: Db) -> Response:
     db.execute(delete(WearLog).where(WearLog.item_id == item.id))
     db.execute(delete(ItemStatusChange).where(ItemStatusChange.item_id == item.id))
     db.execute(delete(DonationItem).where(DonationItem.item_id == item.id))
+    photos = list(db.scalars(select(ItemPhoto).where(ItemPhoto.item_id == item.id)))
+    for photo in photos:
+        db.delete(photo)
     db.delete(item)
     db.commit()
+    delete_photo_files(photos)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{item_id}/wear", response_model=ItemOut)
-def wear_item(item_id: str, user: CurrentUser, db: Db, body: WearIn | None = None) -> Item:
+def wear_item(item_id: str, user: CurrentUser, db: Db, body: WearIn | None = None) -> ItemOut:
     """Record that the item was worn on a day. Only available items can be worn.
 
     Idempotent per day: recording the same item on the same day twice counts once.
@@ -103,13 +107,13 @@ def wear_item(item_id: str, user: CurrentUser, db: Db, body: WearIn | None = Non
         raise HTTPException(422, "worn_on cannot be in the future")
     already = db.scalar(select(WearLog).where(WearLog.item_id == item.id, WearLog.worn_on == worn_on))
     if already is not None:
-        return item
+        return item_out(db, item)
     db.add(WearLog(user_id=user.id, item_id=item.id, worn_on=worn_on))
     item.wear_count += 1
     if item.last_worn_at is None or worn_on > item.last_worn_at:
         item.last_worn_at = worn_on
     db.commit()
-    return item
+    return item_out(db, item)
 
 
 @router.get("/{item_id}/history")

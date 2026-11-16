@@ -22,6 +22,7 @@ All endpoints are under `/v1` (only `/health` is at the root).
 | Account | `POST /auth/register`, `POST /auth/login`, `GET /me`, `GET /me/export`, `DELETE /me` | A1, A6 |
 | Profile | `GET/PUT/DELETE /me/profile` (all fields optional, never asked at sign-up) | PROF-1 |
 | Wardrobe | `GET/POST /items`, `GET/PATCH/DELETE /items/{id}`, `POST /items/{id}/wear`, `GET /items/{id}/history` | W7–W9, S4 |
+| Photos | `POST/GET /items/{id}/photos`, `DELETE /items/{id}/photos/{photo_id}`, `GET /media/{photo_id}/{variant}` | W1 |
 | Donations | `POST /donations`, `GET /donations` | D1–D3, D5 |
 | Dashboard | `GET /me/dashboard` | F1–F3 |
 
@@ -30,10 +31,13 @@ All endpoints are under `/v1` (only `/health` is at the root).
 - Record ids are random UUIDs, not sequential numbers.
 - Wearing an item is counted once per day, so a double tap cannot inflate the count.
 - Every status change is kept in a history table.
+- Photos: JPEG, PNG or WebP up to 8 MB, at most 6 per item. The type is decided from the file's content, not its name. Each photo is re-encoded, which removes location and device data, and a thumbnail is made.
+- Photo files are private. They are served only through signed links that expire after 10 minutes; the API hands those links to the owner alone. Deleting a photo, an item or the account deletes the files.
+- Items carry `cover_thumb_url`, a signed link to their first photo's thumbnail.
 
 ## Not implemented yet
 
-Google and phone sign-in, password reset, refresh tokens, photo upload and clothing extraction, outfit suggestions, market, heritage, admin, database migrations (tables are created on startup for now).
+Google and phone sign-in, password reset, refresh tokens, automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin, database migrations (tables are created on startup for now).
 
 ## Security notes
 
