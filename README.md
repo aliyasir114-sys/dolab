@@ -35,6 +35,8 @@ A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions f
 | `Market.dc.html` | سوق دولاب | بحث وفلاتر: جديد / مستعمل / تراثي |
 | `Sell.dc.html` | دورة نشر المنتج | ست خطوات: رفع ← فحص آلي ← مراجعة ← تأكيد البائع ← اعتماد ← ظهور |
 | `Donate.dc.html` | التبرع بالملابس | اختيار قطع وجهة التبرع ثم التأكيد |
+| `Profile.dc.html` | ملفي الشخصي | الطول، الوزن، المقاس، شكل الجسم والوجه (كلها اختيارية) |
+| `Dashboard.dc.html` | لوحة الموضة | مؤشر الاستفادة، الحالات، ألوان الدولاب، تكلفة الارتداء |
 
 > ملفات `.dc.html` هي مصدر لوحة التصميم؛ تعتمد على ملف `support.js` الخاص باللوحة ولا تُعرض كصفحات مستقلة. استخدمها مرجعاً للبنية والنصوص والألوان والمقاسات (كل شاشة 390×844).
 > The `.dc.html` files are design-canvas sources and do not render standalone; treat them as a reference for structure, copy, colors and sizes.
@@ -76,4 +78,4 @@ A smart digital wardrobe: catalogue your clothes, get daily outfit suggestions f
 
 ## لم يُصمَّم بعد / Not yet designed
 
-الملف الشخصي، لوحة الموضة، لوحة التاجر، نسخة الموقع (سطح المكتب)، بقية الشاشات بالإنجليزية.
+لوحة التاجر، لوحة تحكم الإدارة، نسخة الموقع (سطح المكتب)، بقية الشاشات بالإنجليزية.
