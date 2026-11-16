@@ -31,15 +31,15 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def create_token(user_id: int) -> str:
+def create_token(user_id: str) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=settings.token_minutes)
     return jwt.encode({"sub": str(user_id), "exp": expires}, settings.jwt_secret, algorithm="HS256")
 
 
-def read_token(token: str) -> int | None:
+def read_token(token: str) -> str | None:
     """Return the user id in a valid token, or None."""
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-        return int(payload["sub"])
-    except (jwt.PyJWTError, KeyError, ValueError):
+        return str(payload["sub"])
+    except (jwt.PyJWTError, KeyError):
         return None

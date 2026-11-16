@@ -4,11 +4,12 @@ from sqlalchemy import select
 from ..deps import CurrentUser, Db
 from ..models import GONE_STATUSES, Donation, DonationItem, Item
 from ..schemas import DonationIn, DonationOut
+from ..services import set_status
 
 router = APIRouter(prefix="/donations", tags=["donations"])
 
 
-def _out(donation: Donation, item_ids: list[int]) -> DonationOut:
+def _out(donation: Donation, item_ids: list[str]) -> DonationOut:
     return DonationOut(
         id=donation.id,
         recipient_type=donation.recipient_type,
@@ -32,7 +33,7 @@ def donate(body: DonationIn, user: CurrentUser, db: Db) -> DonationOut:
     db.add(donation)
     db.flush()
     for item in items:
-        item.status = "donated"
+        set_status(db, item, "donated")
         db.add(DonationItem(donation_id=donation.id, item_id=item.id))
     db.commit()
     return _out(donation, item_ids)
@@ -40,7 +41,7 @@ def donate(body: DonationIn, user: CurrentUser, db: Db) -> DonationOut:
 
 @router.get("", response_model=list[DonationOut])
 def list_donations(user: CurrentUser, db: Db) -> list[DonationOut]:
-    donations = list(db.scalars(select(Donation).where(Donation.user_id == user.id).order_by(Donation.id)))
+    donations = list(db.scalars(select(Donation).where(Donation.user_id == user.id).order_by(Donation.confirmed_at)))
     result = []
     for donation in donations:
         ids = list(db.scalars(select(DonationItem.item_id).where(DonationItem.donation_id == donation.id)))

@@ -14,10 +14,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DOLAB API", version="0.1.0", lifespan=lifespan)
-app.include_router(auth.router)
-app.include_router(items.router)
-app.include_router(donations.router)
-app.include_router(dashboard.router)
+# All endpoints live under /v1 so the contract can change later without breaking old clients.
+for module in (auth, items, donations, dashboard):
+    app.include_router(module.router, prefix="/v1")
 
 
 @app.get("/health", tags=["meta"])

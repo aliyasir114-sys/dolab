@@ -4,7 +4,7 @@ SHIRT = {"name": "Classic white shirt", "category": "shirt", "primary_color": "w
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("http://testserver/health").json() == {"status": "ok"}
 
 
 # --- account ---------------------------------------------------------------
@@ -35,6 +35,43 @@ def test_wrong_password_and_unknown_email_look_the_same(client, signup):
     unknown = client.post("/auth/login", json={"email": "b@example.com", "password": "wrong-password"})
     assert wrong.status_code == unknown.status_code == 401
     assert wrong.json() == unknown.json()
+
+
+def test_repeated_wrong_passwords_are_blocked(client, signup):
+    signup("a@example.com", "correct-horse")
+    wrong = {"email": "a@example.com", "password": "wrong-password"}
+    for _ in range(5):
+        assert client.post("/auth/login", json=wrong).status_code == 401
+    assert client.post("/auth/login", json=wrong).status_code == 429
+    # Even the right password is refused while the account is locked out.
+    right = {"email": "a@example.com", "password": "correct-horse"}
+    assert client.post("/auth/login", json=right).status_code == 429
+
+
+def test_export_contains_all_of_the_users_data(client, signup):
+    headers = signup("me@example.com")
+    other = signup("other@example.com")
+    item_id = client.post("/items", json={**SHIRT, "purchase_price": "40.00"}, headers=headers).json()["id"]
+    client.post("/items", json={"name": "Not mine", "category": "hat"}, headers=other)
+    client.post(f"/items/{item_id}/wear", headers=headers)
+    client.put("/me/profile", json={"height_cm": 170}, headers=headers)
+    client.post("/donations", json={"item_ids": [item_id], "recipient_type": "charity"}, headers=headers)
+
+    data = client.get("/me/export", headers=headers).json()
+    assert data["user"]["email"] == "me@example.com"
+    assert "password_hash" not in data["user"]
+    assert data["profile"]["height_cm"] == 170.0
+    assert [i["name"] for i in data["items"]] == [SHIRT["name"]]
+    assert data["wear_log"][0]["item_id"] == item_id
+    assert [c["to_status"] for c in data["status_history"]] == ["available", "donated"]
+    assert data["donations"][0]["item_ids"] == [item_id]
+
+
+def test_profile_can_be_deleted(client, signup):
+    headers = signup()
+    client.put("/me/profile", json={"height_cm": 170, "weight_kg": 70}, headers=headers)
+    assert client.delete("/me/profile", headers=headers).status_code == 204
+    assert client.get("/me/profile", headers=headers).json()["height_cm"] is None
 
 
 def test_endpoints_require_a_valid_token(client):
@@ -123,6 +160,47 @@ def test_wearing_counts_and_cost_per_wear(client, signup):
     assert worn["last_worn_at"] == date.today().isoformat()
     assert worn["currency"] == "USD"
     assert worn["cost_per_wear"] == "20.00"
+
+
+def test_wearing_twice_on_one_day_counts_once(client, signup):
+    headers = signup()
+    item_id = client.post("/items", json=SHIRT, headers=headers).json()["id"]
+    client.post(f"/items/{item_id}/wear", headers=headers)
+    again = client.post(f"/items/{item_id}/wear", headers=headers)
+    assert again.status_code == 200
+    assert again.json()["wear_count"] == 1
+
+
+def test_status_history_is_recorded(client, signup):
+    headers = signup()
+    item_id = client.post("/items", json=SHIRT, headers=headers).json()["id"]
+    client.patch(f"/items/{item_id}", json={"status": "laundry"}, headers=headers)
+    client.patch(f"/items/{item_id}", json={"status": "laundry"}, headers=headers)
+    client.patch(f"/items/{item_id}", json={"status": "available"}, headers=headers)
+    history = client.get(f"/items/{item_id}/history", headers=headers).json()
+    assert [(h["from_status"], h["to_status"]) for h in history] == [
+        (None, "available"),
+        ("available", "laundry"),
+        ("laundry", "available"),
+    ]
+
+
+def test_ids_are_not_sequential_numbers(client, signup):
+    headers = signup()
+    first = client.post("/items", json=SHIRT, headers=headers).json()["id"]
+    second = client.post("/items", json=SHIRT, headers=headers).json()["id"]
+    assert len(first) == 36 and first != second
+    assert not first.isdigit()
+
+
+def test_list_is_paginated_with_a_total(client, signup):
+    headers = signup()
+    for number in range(3):
+        client.post("/items", json={**SHIRT, "name": f"Shirt {number}"}, headers=headers)
+    page = client.get("/items", params={"limit": 2, "offset": 2}, headers=headers)
+    assert page.headers["X-Total-Count"] == "3"
+    assert [i["name"] for i in page.json()] == ["Shirt 2"]
+    assert client.get("/items", params={"limit": 0}, headers=headers).status_code == 422
 
 
 def test_only_available_items_can_be_worn(client, signup):

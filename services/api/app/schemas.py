@@ -41,7 +41,7 @@ class TokenOut(BaseModel):
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     email: str
     locale: str
     account_type: str
@@ -99,7 +99,7 @@ class ItemPatch(BaseModel):
 class ItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     name: str
     category: str
     primary_color: str | None
@@ -111,6 +111,7 @@ class ItemOut(BaseModel):
     purchase_price: Decimal | None
     currency: str | None
     added_at: datetime
+    updated_at: datetime
     wear_count: int
     last_worn_at: date | None
 
@@ -127,17 +128,17 @@ class WearIn(BaseModel):
 
 
 class DonationIn(BaseModel):
-    item_ids: list[int] = Field(min_length=1, max_length=100)
+    item_ids: list[str] = Field(min_length=1, max_length=100)
     recipient_type: Literal["charity", "person"]
     recipient_name: str | None = Field(default=None, max_length=120)
 
 
 class DonationOut(BaseModel):
-    id: int
+    id: str
     recipient_type: str
     recipient_name: str | None
     confirmed_at: datetime
-    item_ids: list[int]
+    item_ids: list[str]
 
 
 class DashboardOut(BaseModel):
