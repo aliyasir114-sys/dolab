@@ -12,6 +12,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-16 | Claude | النسخ الإنجليزية لكل الشاشات (`*En.dc.html`) | `design/` | تم |
 | 2026-11-16 | Claude | التراث: قائمة دول بدل المناطق؛ أيقونة الأهرامات النوبية بدل عبارة SUDANESE MADE | `design/`, `docs/PRD.md` | تم |
 | 2026-11-16 | Claude | صفحات الموقع: الرئيسية، دولابي، السوق (عربي وإنجليزي) | `design/Web*.dc.html` | تم |
+| 2026-11-16 | ChatGPT | مراجعة متطلبات المنتج وإعداد مقترح تحسينات قبل التنفيذ | `docs/proposals/2026-11-16-product-and-technical-review.md` | جارٍ |
 
 ## مهام مفتوحة لم يأخذها أحد / Open, unclaimed
 
