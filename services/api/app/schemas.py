@@ -114,6 +114,8 @@ class ItemOut(BaseModel):
     updated_at: datetime
     wear_count: int
     last_worn_at: date | None
+    # Short-lived signed link to the first photo's thumbnail, if the item has a photo.
+    cover_thumb_url: str | None = None
 
     @computed_field
     @property
@@ -121,6 +123,18 @@ class ItemOut(BaseModel):
         if self.purchase_price is None or self.wear_count <= 0:
             return None
         return (self.purchase_price / self.wear_count).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+class PhotoOut(BaseModel):
+    id: str
+    content_type: str
+    width: int
+    height: int
+    size_bytes: int
+    created_at: datetime
+    # Signed links that expire after a few minutes; ask again for fresh ones.
+    url: str
+    thumb_url: str
 
 
 class WearIn(BaseModel):

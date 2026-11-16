@@ -71,6 +71,24 @@ class Item(Base):
     last_worn_at: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
+class ItemPhoto(Base):
+    """A private photo of an item. Files are reached only through short-lived signed URLs."""
+
+    __tablename__ = "item_photos"
+
+    id: Mapped[str] = mapped_column(_ID, primary_key=True, default=new_id)
+    item_id: Mapped[str] = mapped_column(_ID, ForeignKey("items.id"), index=True)
+    # Owner is stored on the photo itself so access never depends on a join.
+    user_id: Mapped[str] = mapped_column(_ID, ForeignKey("users.id"), index=True)
+    original_key: Mapped[str] = mapped_column(String(200))
+    thumb_key: Mapped[str] = mapped_column(String(200))
+    content_type: Mapped[str] = mapped_column(String(30))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ItemStatusChange(Base):
     """History of an item's status, so the current status is not the only record."""
 
