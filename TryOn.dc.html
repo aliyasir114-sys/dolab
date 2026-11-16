@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>التجربة الافتراضية</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'IBM Plex Sans Arabic',sans-serif}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+</style>
+</helmet>
+<div dir="rtl" style="width: 390px; height: 844px; box-sizing: border-box; background: #080808; color: #F5F5F5; display: flex; flex-direction: column">
+<div style="flex: 1; min-height: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 12px; color: #A8A8A8">جرّب قبل الارتداء</span>
+<h1 style="margin: 0; font-size: 26px; font-weight: 700">التجربة الافتراضية</h1>
+</div>
+<div style="height: 330px; border: 1px dashed #A8A8A8; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 0 24px">
+<span style="font-size: 15px; font-weight: 600">{{stage}}</span>
+<span style="font-size: 12px; color: #A8A8A8">{{stageSub}}</span>
+</div>
+<span style="font-size: 13px; color: #A8A8A8">اختر قطعة من دولابك أو من السوق</span>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{pieces}}" as="p" hint-placeholder-count="3">
+<button type="button" onClick="{{p.pick}}" aria-pressed="{{p.on}}" style="height: 64px; border: 1px solid #F5F5F5; background: {{p.bg}}; color: {{p.fg}}; font-size: 13px; font-weight: 600; font-family: inherit; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px"><span>{{p.name}}</span><span style="font-size: 10px; font-weight: 400">{{p.from}}</span></button>
+</sc-for>
+</div>
+<button type="button" onClick="{{run}}" style="height: 52px; border: 0; background: #F5F5F5; color: #080808; font-size: 16px; font-weight: 700; font-family: inherit">جرّب الآن</button>
+<p style="margin: 0; font-size: 12px; line-height: 1.6; color: #A8A8A8">النتيجة تقريبية، ولا تضمن المقاس الحقيقي أو طريقة سقوط القماش.</p>
+</div>
+<nav aria-label="التنقل الرئيسي" style="display: flex; height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #D9D9D9; font-size: 11px">
+<a href="Home.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 11l9-7 9 7v9H3z"></path></svg>الرئيسية</a>
+<a href="Wardrobe.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18"></rect><path d="M12 3v18M9.5 11v2M14.5 11v2"></path></svg>دولابي</a>
+<a href="Stylist.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"></path></svg>المستشار</a>
+<a href="Market.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 8h14l-1 13H6zM9 8V6a3 3 0 016 0v2"></path></svg>السوق</a>
+<a href="Heritage.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l9 9-9 9-9-9z"></path><path d="M12 8l4 4-4 4-4-4z"></path></svg>التراث</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+constructor(props) { super(props); this.state = { piece: 'قميص أبيض', done: false }; }
+renderVals() {
+const st = this.state || {};
+const cur = st.piece || 'قميص أبيض';
+const pieces = [
+{ name: 'قميص أبيض', from: 'من دولابك' },
+{ name: 'جلابية بيضاء', from: 'من دولابك' },
+{ name: 'ثوب سوداني', from: 'من السوق' }
+].map((p) => ({
+...p, on: p.name === cur,
+bg: p.name === cur ? '#F5F5F5' : 'transparent',
+fg: p.name === cur ? '#080808' : '#F5F5F5',
+pick: () => this.setState({ piece: p.name, done: false })
+}));
+return {
+pieces,
+run: () => this.setState({ done: true }),
+stage: st.done ? 'معاينة: ' + cur + ' على صورتك' : 'ضع صورتك الكاملة هنا',
+stageSub: st.done ? 'هنا تظهر نتيجة التجربة — يمكنك حفظها أو مقارنتها بقطعة أخرى' : 'صورة واضحة للجسم كاملاً بإضاءة طبيعية ودون فلاتر'
+};
+}
+}
+</script>
+</body>
+</html>
