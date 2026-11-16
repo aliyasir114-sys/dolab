@@ -10,6 +10,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-16 | Claude | وثيقة متطلبات المنتج، الإصدار 0.1 | `docs/PRD.md` | تم |
 | 2026-11-16 | Claude | شاشتا لوحة التاجر ولوحة تحكم الإدارة (15 شاشة إجمالاً) | `design/` | تم |
 | 2026-11-16 | Claude | النسخ الإنجليزية لكل الشاشات (`*En.dc.html`) | `design/` | تم |
+| 2026-11-16 | Claude | التراث: قائمة دول بدل المناطق؛ أيقونة الأهرامات النوبية بدل عبارة SUDANESE MADE | `design/`, `docs/PRD.md` | تم |
 
 ## مهام مفتوحة لم يأخذها أحد / Open, unclaimed
 

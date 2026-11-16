@@ -15,25 +15,27 @@ a{color:inherit;text-decoration:none}a:hover{color:inherit}
 </style>
 </helmet>
 <div dir="ltr" style="width: 390px; height: 844px; box-sizing: border-box; background: #F5F5F5; color: #080808; display: flex; flex-direction: column">
-<div style="flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px">
-<div style="background: #080808; color: #F5F5F5; padding: 28px 20px 24px; display: flex; flex-direction: column; gap: 8px">
-<span style="font-family: 'Space Grotesk', sans-serif; font-size: 11px; letter-spacing: 3px; color: #A8A8A8">WORLD HERITAGE</span>
-<h1 style="margin: 0; font-size: 34px; line-height: 1.2; font-weight: 700">World Heritage</h1>
-<p style="margin: 0; font-size: 14px; line-height: 1.7; color: #A8A8A8">Traditional dress from peoples around the world: origins, occasions and how it is worn.</p>
+<div style="flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px">
+<div style="background: #080808; color: #F5F5F5; padding: 20px 20px 18px; display: flex; flex-direction: column; gap: 8px">
+<svg role="img" aria-label="Nubian pyramids" width="48" height="24" viewBox="0 0 48 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2 22L10 4l8 18M15 22L24 2l9 20M30 22l8-16 8 16M1 22h46"></path></svg>
+<h1 style="margin: 0; font-size: 30px; line-height: 1.2; font-weight: 700">World Heritage</h1>
+<p style="margin: 0; font-size: 13px; line-height: 1.6; color: #A8A8A8">Pick a country to explore its traditional dress and occasions.</p>
 </div>
-<div style="padding: 0 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">01</span><span style="font-size: 16px; font-weight: 700">Sudan</span></a>
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">02</span><span style="font-size: 16px; font-weight: 700">Africa</span></a>
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">03</span><span style="font-size: 16px; font-weight: 700">Arab world</span></a>
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">04</span><span style="font-size: 16px; font-weight: 700">Asia</span></a>
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">05</span><span style="font-size: 16px; font-weight: 700">Europe</span></a>
-<a href="MarketEn.dc.html" style="height: 100px; box-sizing: border-box; padding: 12px 14px; background: #FFFFFF; border: 1px solid #D9D9D9; display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: #5E5E5E">06</span><span style="font-size: 16px; font-weight: 700">Americas and Oceania</span></a>
+<div style="padding: 0 20px; display: flex; flex-direction: column; gap: 4px">
+<label for="cq" style="font-size: 12px; color: #5E5E5E">Search for a country</label>
+<input id="cq" type="search" onChange="{{onQuery}}" style="height: 48px; box-sizing: border-box; padding: 0 14px; background: #FFFFFF; border: 1px solid #080808; color: #080808; font-size: 16px; font-family: inherit">
 </div>
-<div style="margin: 0 20px; padding: 16px; border: 1px solid #080808; display: flex; flex-direction: column; gap: 6px">
-<h2 style="margin: 0; font-size: 18px; font-weight: 700">Heritage renewed</h2>
-<p style="margin: 0; font-size: 13px; line-height: 1.7; color: #5E5E5E">Designers worldwide creating modern pieces inspired by their own heritage.</p>
-<span style="font-size: 13px; font-weight: 600">[designer name] · [collection name]</span>
-</div>
+<ul style="flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0 20px; padding: 0; background: #FFFFFF; border: 1px solid #D9D9D9">
+<sc-for list="{{countries}}" as="c" hint-placeholder-count="8">
+<li style="border-bottom: 1px solid #D9D9D9">
+<a href="MarketEn.dc.html" style="min-height: 52px; padding: 6px 14px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+<span style="font-size: 16px; font-weight: 700">{{c.name}}</span>
+<span style="font-size: 12px; color: #5E5E5E; text-align: end">{{c.dress}}</span>
+</a>
+</li>
+</sc-for>
+</ul>
+<span style="padding: 0 20px 8px; font-size: 12px; color: #5E5E5E">{{count}}</span>
 </div>
 <nav aria-label="Main navigation" style="display: flex; height: 72px; flex-shrink: 0; background: #FFFFFF; border-top: 1px solid #D9D9D9; font-size: 11px">
 <a href="HomeEn.dc.html" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #5E5E5E"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 11l9-7 9 7v9H3z"></path></svg>Home</a>
@@ -46,7 +48,24 @@ a{color:inherit;text-decoration:none}a:hover{color:inherit}
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
 class Component extends DCLogic {
-renderVals() { return {}; }
+constructor(props) { super(props); this.state = { q: '' }; }
+renderVals() {
+const all = [
+['Ethiopia', 'Habesha kemis'], ['Germany', 'Dirndl'], ['Indonesia', 'Batik'], ['UAE', 'Kandura'],
+['Saudi Arabia', 'Thobe and shemagh'], ['Sudan', 'Jalabiya and toub'], ['China', 'Hanfu'], ['Morocco', 'Kaftan'],
+['Mexico', 'Huipil'], ['India', 'Sari'], ['Japan', 'Kimono'], ['Pakistan', 'Shalwar kameez'],
+['Peru', 'Poncho'], ['Tunisia', 'Jebba'], ['South Sudan', 'Lawa'], ['Oman', 'Dishdasha'],
+['Ghana', 'Kente'], ['Palestine', 'Embroidered thobe'], ['Vietnam', 'Ao dai'], ['Korea', 'Hanbok'],
+['Kenya', 'Shuka'], ['Egypt', 'Galabeya'], ['Mauritania', 'Daraa and melhfa'], ['Nigeria', 'Agbada']
+].map((r) => ({ name: r[0], dress: r[1] })).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+const q = ((this.state && this.state.q) || '').trim().toLowerCase();
+const countries = all.filter((c) => !q || c.name.toLowerCase().indexOf(q) >= 0);
+return {
+countries,
+count: countries.length + ' / ' + all.length,
+onQuery: (e) => this.setState({ q: e.target.value })
+};
+}
 }
 </script>
 </body>
