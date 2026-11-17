@@ -34,6 +34,8 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-17 | Claude | خطة المرحلة الأولى، المسودة 0.6 | `docs/proposals/phase-1-implementation-plan.md` | بانتظار الاعتماد النهائي |
 | 2026-11-17 | Ali | توزيع الفريق: Gemini للتصميم ويملك `design/`، Claude Code مهندس رئيسي، Copilot مراجع فقط، ChatGPT مدير منتج ومشرف تقني، والقرار النهائي لـ Ali | `AGENTS.md` | تم |
 | 2026-11-17 | Ali | صلاحية الكتابة للجميع بشرط الإخطار أولاً (Issue بقالب «إخطار»)؛ حرية كاملة لـ Claude، وChatGPT يراجع بعده | `AGENTS.md`، `.github/ISSUE_TEMPLATE/notice.md` | تم |
+| 2026-11-17 | Ali | سياسة التعاون الرسمية: الجميع يكتب الكود وفق تخصصه بعد إذن المالك وتحديد المهمة؛ فرع مستقل وطلب دمج لكل عضو؛ لا تعديل مباشر على `main`؛ مراجعة مشتركة؛ القرار النهائي للمالك | `AGENTS.md` | تم |
+| 2026-11-17 | Claude | تحديث `AGENTS.md` بالسياسة الجديدة (طلب دمج للمراجعة، لا يُدمج دون موافقة المالك) | `AGENTS.md`، `docs/WORKLOG.md` | قيد المراجعة |
 
 ## التالي / Next (Claude)
 
