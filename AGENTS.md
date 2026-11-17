@@ -12,26 +12,33 @@ This repository is edited by more than one AI assistant (Claude, ChatGPT) and by
 
 ## 2. Roles / الأدوار
 
-Decided by the product owner on 2026-11-16:
+Decided by the product owner on 2026-11-17 (replaces the 2026-11-16 roles):
 
-- **Claude implements the whole project**: design, documentation and all code (`design/`, `docs/`, `services/`, `apps/`).
-- **ChatGPT is a consultant only**: it reviews and advises. It does not commit code or edit existing files. Its advice goes in `docs/proposals/<short-name>.md` or as review comments on pull requests.
-- **Ali (product owner)** decides when advice and implementation disagree.
+| Member | Role | Writes to | Does not |
+|---|---|---|---|
+| **Ali** | Product owner. **Final decision** on scope, priorities and any disagreement | — | — |
+| **ChatGPT** | Product manager and technical supervisor: vision, architecture, security, quality review, recommendations | `docs/proposals/`, review comments on pull requests | Commit code or edit existing files; make final decisions |
+| **Claude Code** | Lead engineer: builds the system, implements specifications, integrates the parts | `services/`, `apps/`, `packages/`, `docs/` (except `docs/proposals/` written by others), CI | Edit `design/` |
+| **Gemini** | Creative and design lead: UI design, motion and animation, visual consistency, user experience | `design/` (owns it; edits files directly) | Edit code or other folders |
+| **GitHub Copilot** | Reviewer and assistant engineer: code review, bug finding, test suggestions, performance review | Review comments on pull requests | Commit code or open pull requests |
 
-كلود ينفّذ المشروع كله. ChatGPT مستشار فقط: يراجع وينصح عبر `docs/proposals/` أو تعليقات على طلبات الدمج، ولا يعدّل الملفات. القرار النهائي لمالك المنتج.
+الأدوار (قرار المالك 2026-11-17): **Ali** صاحب القرار النهائي. **ChatGPT** مدير المنتج والمشرف التقني، يراجع وينصح عبر `docs/proposals/` وتعليقات طلبات الدمج ولا يعدّل الملفات. **Claude Code** المهندس الرئيسي، ينفّذ الكود والتكامل ولا يعدّل `design/`. **Gemini** مسؤول التصميم ويملك `design/` ويعدّله مباشرة. **GitHub Copilot** مراجع فقط عبر تعليقات طلبات الدمج.
 
-| Path | Contents |
-|---|---|
-| `design/` | Screen sources exported from the design canvas (edits here are overwritten on the next export) |
-| `docs/` | PRD, work log, proposals |
-| `services/api/` | Backend (FastAPI) |
-| `apps/web/`, `apps/mobile/` | Next.js site and Flutter app (not started) |
+| Path | Contents | Owner |
+|---|---|---|
+| `design/` | Screen designs. The current files are `.dc.html` exports from the first design canvas; they need that canvas's `support.js` to render, so new designs may use any reviewable format (images, specs, HTML) | Gemini |
+| `docs/` | PRD, plan, work log | Claude (product decisions from Ali) |
+| `docs/proposals/` | Reviews and proposals | anyone |
+| `services/api/` | Backend (FastAPI) | Claude |
+| `apps/web/`, `apps/mobile/` | Next.js site and Flutter app (not started) | Claude, built from Gemini's designs |
+
+**Design handoff:** Claude builds interfaces from what is in `design/` on `main`. If a design is unclear or cannot be built as drawn, Claude asks in a pull request comment or a file in `docs/proposals/` instead of changing `design/`.
 
 ## 3. Before you write / قبل أي تعديل
 
 1. Pull the latest `main`.
 2. Read `docs/WORKLOG.md` to see what is done and what is in progress.
-3. Code changes go on a branch and a pull request; the API tests must pass before merging. Claude merges its own pull requests once the checks pass (owner decision, 2026-11-16).
+3. Code changes go on a branch and a pull request; the API tests must pass before merging. Claude merges its own pull requests once the checks pass (owner decision, 2026-11-16). Review comments from ChatGPT or Copilot are answered before merging when they arrive in time; disagreements go to Ali.
 4. Never force-push. Never rewrite or delete another contributor's files.
 
 ## 4. Disagreements / عند الاختلاف

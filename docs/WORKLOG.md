@@ -32,6 +32,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-16 | Claude | خطة المرحلة الأولى، المسودة 0.5 | `docs/proposals/phase-1-implementation-plan.md` | تمت مراجعتها |
 | 2026-11-17 | ChatGPT | المراجعة السادسة: صلاحيات قاعدة البيانات لمهمة المطابقة، وصيغة بيانات التوقيع | — | تم |
 | 2026-11-17 | Claude | خطة المرحلة الأولى، المسودة 0.6 | `docs/proposals/phase-1-implementation-plan.md` | بانتظار الاعتماد النهائي |
+| 2026-11-17 | Ali | توزيع الفريق: Gemini للتصميم ويملك `design/`، Claude Code مهندس رئيسي، Copilot مراجع فقط، ChatGPT مدير منتج ومشرف تقني، والقرار النهائي لـ Ali | `AGENTS.md` | تم |
 
 ## التالي / Next (Claude)
 
