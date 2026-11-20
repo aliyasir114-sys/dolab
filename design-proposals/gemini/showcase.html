@@ -175,6 +175,9 @@
 
     let previouslyFocusedElement = null;
     let activeModal = null;
+    // Everything except the dialog. While a dialog is open it is inert: no clicks, no focus,
+    // and hidden from screen readers.
+    const pageContent = document.querySelector('.showcase-wrapper');
 
     function getFocusableElements(container) {
       return Array.from(
@@ -188,6 +191,7 @@
       previouslyFocusedElement = document.activeElement;
       activeModal = modal;
       modal.setAttribute('aria-hidden', 'false');
+      pageContent.inert = true;
 
       const focusable = getFocusableElements(modal);
       if (focusable.length) {
@@ -195,6 +199,15 @@
       }
 
       document.addEventListener('keydown', handleModalKeydown);
+      document.addEventListener('focusin', keepFocusInModal);
+    }
+
+    // Focus that leaves the dialog (for example after a click on the backdrop) comes back.
+    function keepFocusInModal(e) {
+      if (activeModal && !activeModal.contains(e.target)) {
+        const focusable = getFocusableElements(activeModal);
+        if (focusable.length) focusable[0].focus();
+      }
     }
 
     function closeModal(id) {
@@ -203,6 +216,9 @@
       modal.setAttribute('aria-hidden', 'true');
       activeModal = null;
       document.removeEventListener('keydown', handleModalKeydown);
+      document.removeEventListener('focusin', keepFocusInModal);
+      // The page must be interactive again before focus can return to it.
+      pageContent.inert = false;
       if (previouslyFocusedElement) {
         previouslyFocusedElement.focus();
       }
@@ -221,6 +237,13 @@
         if (!focusable.length) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
+
+        // Focus is outside the dialog (e.g. on the backdrop or the page body): bring it in.
+        if (!activeModal.contains(document.activeElement)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+          return;
+        }
 
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
