@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DOLAB Final Design System (Phase B)</title>
+  <link rel="stylesheet" href="styles/theme.css">
+  <style>
+    .showcase-wrapper {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      background: var(--color-primary);
+      color: var(--color-surface);
+      padding: var(--space-m) var(--space-l);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+    }
+    .toolbar-title {
+      font-weight: 700;
+      letter-spacing: 1px;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .toolbar button {
+      background: transparent;
+      border: 1px solid var(--color-border);
+      color: var(--color-surface);
+      padding: var(--space-xs) var(--space-m);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .content-area {
+      flex: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: var(--space-xl) var(--space-m);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3xl);
+      width: 100%;
+    }
+    .section-title {
+      font-size: var(--text-h2);
+      font-weight: 700;
+      border-block-end: 1px solid var(--color-border);
+      padding-block-end: var(--space-s);
+      margin-block-end: var(--space-xl);
+    }
+    .grid-responsive {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--space-xl);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="showcase-wrapper">
+    <!-- Toolbar -->
+    <header class="toolbar">
+      <span class="toolbar-title">DOLAB SYSTEM</span>
+      <button type="button" onclick="toggleDirection()" aria-label="Toggle Language Direction">Toggle AR/EN</button>
+    </header>
+
+    <main class="content-area">
+
+      <!-- Typography -->
+      <section>
+        <h2 class="section-title">Typography</h2>
+        <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+          <div style="font-size: var(--text-h1); font-weight: 700; line-height: var(--line-h1);">H1 / ماذا سترتدي اليوم؟ / What to wear?</div>
+          <div style="font-size: var(--text-h2); font-weight: 700; line-height: var(--line-h2);">H2 / قميص أبيض كلاسيكي / Classic White Shirt</div>
+          <div style="font-size: var(--text-h3); font-weight: 600; line-height: var(--line-h3);">H3 / إضافة قطعة جديدة / Add New Item</div>
+          <div style="font-size: var(--text-body); font-weight: 400; line-height: var(--line-body);">Body / دولابك في جيبك… وأناقتك تبدأ مما تملك. / Your wardrobe in your pocket.</div>
+        </div>
+      </section>
+
+      <!-- Buttons & Links -->
+      <section>
+        <h2 class="section-title">Buttons &amp; Interaction</h2>
+        <div class="grid-responsive">
+          <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+            <button type="button" class="btn btn-primary">حفظ القطعة (Primary)</button>
+            <button type="button" class="btn btn-secondary">إلغاء (Secondary)</button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+            <button type="button" class="btn btn-primary">
+              <svg class="icon-rtl-flip" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              متابعة (With Icon)
+            </button>
+            <a class="btn" aria-disabled="true" role="button" tabindex="-1">غير متاح (Disabled Link)</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Forms with Accessibility Linkage -->
+      <section>
+        <h2 class="section-title">Form Controls &amp; Errors</h2>
+        <div class="grid-responsive">
+          <div class="form-group">
+            <label class="form-label" for="itemName">اسم القطعة</label>
+            <input type="text" id="itemName" class="input-field" placeholder="مثال: قميص كتان أسود">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="itemPrice">سعر الشراء</label>
+            <div class="input-wrapper">
+              <input type="text" id="itemPrice" class="input-field" aria-invalid="true" aria-describedby="price-error" value="abc">
+            </div>
+            <div id="price-error" class="error-message" role="alert">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+              <span>يرجى إدخال أرقام صحيحة فقط.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Cards -->
+      <section>
+        <h2 class="section-title">Cards &amp; Containers</h2>
+        <div class="grid-responsive">
+          <div class="card">
+            <span style="font-family: var(--font-en); font-size: var(--text-caption); color: var(--color-text-sec);">DLB-000124</span>
+            <h3 style="margin: 0; font-size: var(--text-h3); font-weight: 700;">دولابي</h3>
+            <p style="margin: 0; font-size: var(--text-caption); color: var(--color-text-sec);">120 قطعة متاحة • 3 قيد الغسيل</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modal Trigger -->
+      <section>
+        <h2 class="section-title">Modals &amp; Dialogs</h2>
+        <button type="button" class="btn btn-secondary" onclick="openModal('deleteModal')">فتح نافذة تأكيد الحذف</button>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Modal Component (Accessible) -->
+  <div id="deleteModal" class="modal-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle" class="modal-title">تأكيد الحذف</h3>
+        <button type="button" class="modal-close" onclick="closeModal('deleteModal')" aria-label="إغلاق النافذة">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        هل أنت متأكد من رغبتك في حذف هذه القطعة؟ لا يمكن التراجع عن هذا الإجراء بعد تنفيذه.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('deleteModal')">إلغاء</button>
+        <button type="button" class="btn btn-primary" onclick="closeModal('deleteModal')">تأكيد الحذف</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleDirection() {
+      const html = document.documentElement;
+      if (html.getAttribute('dir') === 'rtl') {
+        html.setAttribute('dir', 'ltr');
+        html.setAttribute('lang', 'en');
+      } else {
+        html.setAttribute('dir', 'rtl');
+        html.setAttribute('lang', 'ar');
+      }
+    }
+
+    let previouslyFocusedElement = null;
+    let activeModal = null;
+
+    function getFocusableElements(container) {
+      return Array.from(
+        container.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      );
+    }
+
+    function openModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      previouslyFocusedElement = document.activeElement;
+      activeModal = modal;
+      modal.setAttribute('aria-hidden', 'false');
+
+      const focusable = getFocusableElements(modal);
+      if (focusable.length) {
+        setTimeout(() => focusable[0].focus(), 50);
+      }
+
+      document.addEventListener('keydown', handleModalKeydown);
+    }
+
+    function closeModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      modal.setAttribute('aria-hidden', 'true');
+      activeModal = null;
+      document.removeEventListener('keydown', handleModalKeydown);
+      if (previouslyFocusedElement) {
+        previouslyFocusedElement.focus();
+      }
+    }
+
+    function handleModalKeydown(e) {
+      if (!activeModal) return;
+
+      if (e.key === 'Escape') {
+        closeModal(activeModal.id);
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = getFocusableElements(activeModal);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
