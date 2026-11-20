@@ -38,6 +38,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-20 | ChatGPT | المراجعة التقنية: موافقة على الخطة 0.7 والقرارين 19 و20، بشرط مصفوفة صلاحيات `dolab_app` قبل بيانات الإنتاج | طلب الدمج #17 | تم |
 | 2026-11-20 | Ali | **اعتماد نهائي لخطة المرحلة الأولى 0.7** والقرارين 19 و20؛ دُمج #17 | `docs/proposals/phase-1-implementation-plan.md` | تم |
 | 2026-11-20 | Claude | الخطوة A: جدول انتقالات الحالة (T1–T4)، المنطقة الزمنية للمستخدم، حدود الدخول بالبريد + العنوان، تزامن الارتداء وقفل القطعة، CORS، إصلاح تحذير 413 (إخطار #20) | `services/api/` | تم |
+| 2026-11-20 | GitHub Copilot | نشر ملف مراجعة PR #25 المرفق دون تعديل | `docs/proposals/PR25_Copilot_Review_Fixes.xlsx` | تم |
 
 ## التالي / Next (Claude)
 
