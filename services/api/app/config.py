@@ -16,6 +16,8 @@ class Settings:
     media_dir: str
     max_upload_bytes: int
     media_url_seconds: int
+    cors_origins: tuple[str, ...]
+    trusted_proxy_hops: int
 
 
 def load_settings() -> Settings:
@@ -35,7 +37,18 @@ def load_settings() -> Settings:
         media_dir=os.getenv("DOLAB_MEDIA_DIR", "./media"),
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
+        cors_origins=_cors_origins(os.getenv("DOLAB_CORS_ORIGINS", "")),
+        trusted_proxy_hops=int(os.getenv("DOLAB_TRUSTED_PROXY_HOPS", "0")),
     )
+
+
+def _cors_origins(raw: str) -> tuple[str, ...]:
+    """Exact origins allowed to call the API from a browser. A wildcard is refused."""
+    origins = tuple(origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip())
+    for origin in origins:
+        if "*" in origin or not origin.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise RuntimeError(f"DOLAB_CORS_ORIGINS: not an allowed origin: {origin!r}")
+    return origins
 
 
 settings = load_settings()

@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from . import clock
 from .db import Base
 
 ITEM_STATUSES = ("available", "laundry", "repair", "stored", "for_sale", "donated", "lost")
@@ -20,7 +21,7 @@ def new_id() -> str:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return clock.now()
 
 
 def as_utc(value: datetime) -> datetime:
@@ -35,6 +36,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     locale: Mapped[str] = mapped_column(String(5), default="ar")
+    # IANA name. Decides which calendar day a wear belongs to and where a month starts.
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     account_type: Mapped[str] = mapped_column(String(20), default="individual")
     # Raised on password reset; access tokens carrying an older value stop working at once.
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -137,6 +140,10 @@ class ItemStatusChange(Base):
     user_id: Mapped[str] = mapped_column(_ID, ForeignKey("users.id"), index=True)
     from_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     to_status: Mapped[str] = mapped_column(String(20))
+    # How the change happened: created, user, donation, donation_cancelled, listing.
+    reason: Mapped[str] = mapped_column(String(20), default="user")
+    # The donation or listing that caused the change, if any.
+    ref_id: Mapped[str | None] = mapped_column(_ID, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

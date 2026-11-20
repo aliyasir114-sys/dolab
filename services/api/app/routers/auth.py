@@ -1,12 +1,12 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from ..config import settings
 
-from ..deps import CurrentUser, Db
+from ..deps import CurrentUser, Db, client_ip
 from ..mailer import send_password_reset
 from ..models import (
     Donation,
@@ -25,6 +25,7 @@ from ..models import (
 )
 from ..ratelimit import login_limiter, reset_limiter
 from ..schemas import (
+    AccountPatch,
     ChangePasswordIn,
     ForgotPasswordIn,
     ItemOut,
@@ -74,26 +75,33 @@ def _revoke_all_sessions(db: Session, user_id: str) -> None:
 def register(body: RegisterIn, db: Db) -> User:
     if db.scalar(select(User).where(User.email == body.email)) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
-    user = User(email=body.email, password_hash=hash_password(body.password), locale=body.locale)
+    user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        locale=body.locale,
+        timezone=body.timezone,
+    )
     db.add(user)
     db.commit()
     return user
 
 
 @router.post("/auth/login", response_model=TokenOut)
-def login(body: LoginIn, db: Db) -> TokenOut:
-    if login_limiter.blocked(body.email):
+def login(body: LoginIn, db: Db, request: Request) -> TokenOut:
+    ip = client_ip(request)
+    wait = login_limiter.blocked(body.email, ip)
+    if wait is not None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "too many failed attempts, try again later",
-            headers={"Retry-After": str(login_limiter.window_seconds)},
+            headers={"Retry-After": str(wait)},
         )
     user = db.scalar(select(User).where(User.email == body.email))
     # Same answer for an unknown email and a wrong password, so accounts cannot be probed.
     if user is None or not verify_password(body.password, user.password_hash):
-        login_limiter.record_failure(body.email)
+        login_limiter.record_failure(body.email, ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong email or password")
-    login_limiter.clear(body.email)
+    login_limiter.clear_address(body.email, ip)
     tokens = _issue_tokens(db, user)
     db.commit()
     return tokens
@@ -182,7 +190,7 @@ def reset_password(body: ResetPasswordIn, db: Db) -> Response:
     user.token_version += 1
     _revoke_all_sessions(db, user.id)
     db.commit()
-    login_limiter.clear(user.email)
+    login_limiter.clear_email(user.email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -201,6 +209,15 @@ def change_password(body: ChangePasswordIn, user: CurrentUser, db: Db) -> TokenO
 
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser) -> User:
+    return user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(body: AccountPatch, user: CurrentUser, db: Db) -> User:
+    """Change account settings: language for emails, and time zone (which decides the day a wear counts on)."""
+    for field, value in body.model_dump(exclude_unset=True, exclude_none=True).items():
+        setattr(user, field, value)
+    db.commit()
     return user
 
 
@@ -235,6 +252,8 @@ def export_data(user: CurrentUser, db: Db) -> dict:
                 "item_id": c.item_id,
                 "from_status": c.from_status,
                 "to_status": c.to_status,
+                "reason": c.reason,
+                "ref_id": c.ref_id,
                 "changed_at": c.changed_at.isoformat(),
             }
             for c in changes

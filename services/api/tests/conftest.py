@@ -8,6 +8,7 @@ _db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _db_file.close()
 os.environ["DOLAB_DATABASE_URL"] = f"sqlite:///{_db_file.name}"
 os.environ["DOLAB_ENV"] = "test"
+os.environ["DOLAB_CORS_ORIGINS"] = "https://web.dolab.test"
 os.environ["DOLAB_MEDIA_DIR"] = tempfile.mkdtemp(prefix="dolab-media-")
 
 from fastapi.testclient import TestClient  # noqa: E402

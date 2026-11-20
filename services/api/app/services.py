@@ -8,8 +8,19 @@ from .schemas import ItemOut
 from .storage import storage
 
 
-def set_status(db: Session, item: Item, new_status: str, *, initial: bool = False) -> None:
-    """Change an item's status and record the change. No-op if the status is unchanged."""
+def set_status(
+    db: Session,
+    item: Item,
+    new_status: str,
+    *,
+    initial: bool = False,
+    reason: str = "user",
+    ref_id: str | None = None,
+) -> None:
+    """Change an item's status and record the change. No-op if the status is unchanged.
+
+    Callers check the transition table (`transitions.path_for`) first; this only records.
+    """
     if not initial and item.status == new_status:
         return
     db.add(
@@ -18,6 +29,8 @@ def set_status(db: Session, item: Item, new_status: str, *, initial: bool = Fals
             user_id=item.user_id,
             from_status=None if initial else item.status,
             to_status=new_status,
+            reason="created" if initial else reason,
+            ref_id=ref_id,
         )
     )
     item.status = new_status

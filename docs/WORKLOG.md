@@ -37,6 +37,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-17 | GitHub Copilot | مسودة Phase 1 0.7 بعد مراجعة ChatGPT: صلاحيات schema والتسلسلات و`ALTER DEFAULT PRIVILEGES` وتهيئة Alembic واختبارات تراجع آلية؛ دون كود أو migrations (إخطار [#16](https://github.com/aliyasir114-sys/dolab/issues/16)) | `docs/proposals/phase-1-implementation-plan.md`, `docs/WORKLOG.md` | تم (#17) |
 | 2026-11-20 | ChatGPT | المراجعة التقنية: موافقة على الخطة 0.7 والقرارين 19 و20، بشرط مصفوفة صلاحيات `dolab_app` قبل بيانات الإنتاج | طلب الدمج #17 | تم |
 | 2026-11-20 | Ali | **اعتماد نهائي لخطة المرحلة الأولى 0.7** والقرارين 19 و20؛ دُمج #17 | `docs/proposals/phase-1-implementation-plan.md` | تم |
+| 2026-11-20 | Claude | الخطوة A: جدول انتقالات الحالة (T1–T4)، المنطقة الزمنية للمستخدم، حدود الدخول بالبريد + العنوان، تزامن الارتداء وقفل القطعة، CORS، إصلاح تحذير 413 (إخطار #20) | `services/api/` | تم |
 
 ## التالي / Next (Claude)
 

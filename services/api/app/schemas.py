@@ -5,7 +5,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from . import clock
+
 ItemStatus = Literal["available", "laundry", "repair", "stored", "for_sale", "donated", "lost"]
+# Statuses an item may be created with (see transitions.CREATABLE).
+CreatableStatus = Literal["available", "laundry", "repair", "stored", "lost"]
 Locale = Literal["ar", "en"]
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -18,12 +22,27 @@ def _clean_email(value: str) -> str:
     return value
 
 
+def _check_timezone(value: str | None) -> str | None:
+    if value is not None and not clock.valid_timezone(value):
+        raise ValueError("unknown time zone; use an IANA name such as Africa/Khartoum")
+    return value
+
+
 class RegisterIn(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=128)
     locale: Locale = "ar"
+    timezone: str = Field(default="UTC", max_length=64)
 
     _email = field_validator("email")(_clean_email)
+    _tz = field_validator("timezone")(_check_timezone)
+
+
+class AccountPatch(BaseModel):
+    locale: Locale | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+
+    _tz = field_validator("timezone")(_check_timezone)
 
 
 class LoginIn(BaseModel):
@@ -67,6 +86,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     locale: str
+    timezone: str
     account_type: str
 
 
@@ -97,7 +117,7 @@ class ItemIn(BaseModel):
     primary_color: str | None = Field(default=None, max_length=40)
     secondary_colors: list[str] = Field(default_factory=list, max_length=8)
     color_confirmed: bool = False
-    status: ItemStatus = "available"
+    status: CreatableStatus = "available"
     purchase_date: date | None = None
     purchase_price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     currency: str | None = None

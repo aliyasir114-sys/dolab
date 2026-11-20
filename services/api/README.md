@@ -19,7 +19,7 @@ All endpoints are under `/v1` (only `/health` is at the root).
 
 | Area | Endpoints | PRD |
 |---|---|---|
-| Account | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `GET /me/export`, `DELETE /me` | A1, A6 |
+| Account | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET/PATCH /me`, `GET /me/export`, `DELETE /me` | A1, A6 |
 | Password | `POST /auth/password/forgot`, `POST /auth/password/reset`, `POST /me/password` | A5 |
 | Profile | `GET/PUT/DELETE /me/profile` (all fields optional, never asked at sign-up) | PROF-1 |
 | Wardrobe | `GET/POST /items`, `GET/PATCH/DELETE /items/{id}`, `POST /items/{id}/wear`, `GET /items/{id}/history` | W7–W9, S4 |
@@ -31,7 +31,9 @@ All endpoints are under `/v1` (only `/health` is at the root).
 - Cost per wear (F4) is returned on every item as `cost_per_wear`. Money is stored as exact decimals, never floating point.
 - Record ids are random UUIDs, not sequential numbers.
 - Wearing an item is counted once per day, so a double tap cannot inflate the count.
-- Every status change is kept in a history table.
+- Every status change is kept in a history table, with how it happened (`created`, `user`, `donation`, …).
+- Status changes follow one table (`app/transitions.py`, plan 4.9): `PATCH` moves between available, laundry, repair, stored and lost; `donated` is reached only through a donation and never left through `PATCH`; `for_sale` is reserved for the market.
+- "Today" is the user's day in their time zone (`PATCH /me` with an IANA name), for wear dates and the dashboard month.
 - Photos: JPEG, PNG or WebP up to 8 MB, at most 6 per item. The type is decided from the file's content, not its name. Each photo is re-encoded, which removes location and device data, and a thumbnail is made.
 - Photo files are private. They are served only through signed links that expire after 10 minutes; the API hands those links to the owner alone. Deleting a photo, an item or the account deletes the files.
 - Items carry `cover_thumb_url`, a signed link to their first photo's thumbnail.
@@ -46,5 +48,7 @@ Google and phone sign-in, a real email provider (reset codes are only logged in 
 - Password reset codes are random, single-use, expire after 30 minutes, and the request answers the same whether or not the email is registered (at most 3 emails an hour per address). Resetting or changing the password signs the user out everywhere else. `DOLAB_JWT_SECRET` must be set in production (the app refuses to start without it).
 - Every item, donation and profile query is scoped to the signed-in user. Another user's item id answers 404.
 - Body measurements live in a separate `profiles` table and are returned only to their owner.
-- Five wrong passwords for one email lock sign-in for 15 minutes. This limiter is in-memory and protects one process only; it must move to a shared store before running several workers.
+- Sign-in limits: 5 wrong passwords for one email from one address block that address for 15 minutes; 20 from any addresses block the email for an hour, so knowing an email is not enough to lock its owner out. Set `DOLAB_TRUSTED_PROXY_HOPS` to the number of proxies in front of the API so the real client address is used.
+- CORS is off unless `DOLAB_CORS_ORIGINS` lists exact origins; wildcards are refused.
+- These limits are in-memory and protects one process only; it must move to a shared store before running several workers.
 - No real secrets or user data belong in this repository.

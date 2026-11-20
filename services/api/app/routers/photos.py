@@ -35,10 +35,11 @@ def upload_photo(item_id: str, file: UploadFile, user: CurrentUser, db: Db) -> P
     The file is checked by its real content, re-encoded (which removes location and device
     data), and stored privately together with a thumbnail.
     """
-    item = _own_item(db, user.id, item_id)
+    # Lock the item so two uploads at once cannot both pass the per-item photo limit.
+    item = _own_item(db, user.id, item_id, lock=True)
     data = file.file.read(settings.max_upload_bytes + 1)
     if len(data) > settings.max_upload_bytes:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "photo is too large")
+        raise HTTPException(413, "photo is too large")
     if not data:
         raise HTTPException(422, "empty file")
     count = db.scalar(select(func.count()).select_from(ItemPhoto).where(ItemPhoto.item_id == item.id))
