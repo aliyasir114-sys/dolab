@@ -1,6 +1,6 @@
 # DOLAB API
 
-Backend for دولاب / DOLAB. Python, FastAPI, SQLAlchemy. SQLite for local development and tests, PostgreSQL in production.
+Backend for دولاب / DOLAB. Python, FastAPI, SQLAlchemy. SQLite for local development and a quick test run; PostgreSQL in production and for the CI run that counts.
 
 ## Run locally
 
@@ -12,6 +12,56 @@ cp .env.example .env          # optional for local use
 uvicorn app.main:app --reload # http://127.0.0.1:8000/docs
 pytest -q
 ```
+
+## PostgreSQL (production, and the CI run that counts)
+
+Set up as decided in plan 4.10.1د (decision 20). Every table is in the schema `dolab`.
+
+| Role | Logs in | What it may do |
+|---|---|---|
+| `dolab_schema_owner` | no | Owns the schema, every table and the migration version table |
+| `dolab_deleter` | no | Will own the deletion functions (step C). `USAGE` on the schema only |
+| `dolab_deploy` | yes | Runs migrations. No rights of its own; may only `SET ROLE` to the two roles above |
+| `dolab_app` | yes | The API. Table rights from the migrations, table by table (below) |
+| `dolab_reconciler` | yes, 2 connections | The reconciliation job (step C). `USAGE` on the schema only for now |
+
+1. **Once per database**, as the infrastructure's admin identity:
+   `psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -f dbtools/bootstrap.sql`, then set a password on each login role.
+   Safe to run again. It also closes the `public` schema, temporary tables and `CONNECT` to everyone not named.
+2. **Every deploy, before the server starts**, as `dolab_deploy`:
+   `DOLAB_MIGRATION_URL=postgresql+psycopg://dolab_deploy:…@host/dolab alembic upgrade head`.
+   The migration switches to `dolab_schema_owner` before touching anything, so `dolab_deploy` never owns an object.
+   The whole upgrade is one transaction. Keep these credentials in the deploy job only, never in the API.
+3. **The server** connects as `dolab_app` (`DOLAB_DATABASE_URL`). Its `search_path` is `pg_catalog, dolab` and
+   every query names the schema anyway. On PostgreSQL the server never creates tables; it refuses SQLite when `DOLAB_ENV=production`.
+
+`dolab_app` privileges (migration `0002_app_privileges`, checked by `tests/test_pg_roles.py` against `dbtools/expected_acl.py`):
+
+| Tables | Privileges |
+|---|---|
+| `users`, `refresh_tokens`, `password_reset_tokens`, `profiles`, `items` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+| `item_photos`, `item_status_changes`, `wear_logs`, `donations`, `donation_items` | `SELECT`, `INSERT`, `DELETE` |
+| `alembic_version` | none |
+
+Never `TRUNCATE`, `REFERENCES` or `TRIGGER`; no sequences exist (identifiers are UUID4).
+
+**Adding a migration:** `alembic revision -m "…"`, name every object `dolab.<name>`, grant `dolab_app` only what the new
+objects need, and add the same grants to `dbtools/expected_acl.py`; the tests fail on any table nobody classified.
+Functions owned by `dolab_deleter` are written with `dbtools/deleter_functions.replace_deleter_function`.
+Each migration has a `downgrade`, or says why it cannot.
+
+**Running the PostgreSQL tests locally** (needs a PostgreSQL 16 you can administer):
+
+```bash
+psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -f dbtools/bootstrap.sql   # then set the login roles' passwords to $PW
+export DOLAB_MIGRATION_URL=postgresql+psycopg://dolab_deploy:$PW@localhost/dolab
+alembic upgrade head && alembic check
+DOLAB_DATABASE_URL=postgresql+psycopg://dolab_app:$PW@localhost/dolab \
+DOLAB_TEST_PG_ADMIN_URL=postgresql+psycopg://postgres:…@localhost/dolab DOLAB_TEST_PG_PASSWORD=$PW pytest -q
+```
+
+SQLite stays for local development and the quick CI run: the server creates its tables, foreign keys are switched on,
+and the schema name is dropped. A local SQLite file made before a model change must be deleted and recreated.
 
 ## What is implemented (v0.1)
 
@@ -40,7 +90,7 @@ All endpoints are under `/v1` (only `/health` is at the root).
 
 ## Not implemented yet
 
-Google and phone sign-in, a real email provider (reset codes are only logged in development), automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin, database migrations (tables are created on startup for now).
+Google and phone sign-in, a real email provider (reset codes are only logged in development), automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin. The deletion log, deletion functions and reconciliation job (plan 4.10, step C).
 
 ## Security notes
 

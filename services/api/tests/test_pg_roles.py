@@ -459,6 +459,12 @@ def test_db23_api_connection():
     assert "FROM dolab.items" in compiled
 
 
+def test_reconciler_session_settings():
+    with connect(E.RECONCILER) as conn:
+        assert value(conn, "SHOW search_path") == "pg_catalog, dolab"
+        assert value(conn, "SHOW statement_timeout") == "30s"
+
+
 def test_api_test_suite_runs_as_app_role():
     """The rest of the suite, in the PostgreSQL job, connects as dolab_app (not a superuser)."""
     from app.db import engine
