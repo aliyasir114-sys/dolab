@@ -27,11 +27,14 @@ Set up as decided in plan 4.10.1د (decision 20). Every table is in the schema `
 
 1. **Once per database**, as the infrastructure's admin identity:
    `psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -f dbtools/bootstrap.sql`, then set a password on each login role.
-   Safe to run again. It also closes the `public` schema, temporary tables and `CONNECT` to everyone not named.
+   Safe to run again, also on a live database: it is one transaction and never touches tables or data.
+   It also closes the `public` schema, temporary tables and `CONNECT` to everyone not named.
 2. **Every deploy, before the server starts**, as `dolab_deploy`:
    `DOLAB_MIGRATION_URL=postgresql+psycopg://dolab_deploy:…@host/dolab alembic upgrade head`.
    The migration switches to `dolab_schema_owner` before touching anything, so `dolab_deploy` never owns an object.
    The whole upgrade is one transaction. Keep these credentials in the deploy job only, never in the API.
+   The baseline refuses a database whose DOLAB tables sit outside `dolab` (an old `create_all` database)
+   rather than creating empty tables beside the old data.
 3. **The server** connects as `dolab_app` (`DOLAB_DATABASE_URL`). Its `search_path` is `pg_catalog, dolab` and
    every query names the schema anyway. On PostgreSQL the server never creates tables; it refuses SQLite when `DOLAB_ENV=production`.
 
