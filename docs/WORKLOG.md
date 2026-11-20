@@ -34,12 +34,13 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-17 | Claude | خطة المرحلة الأولى، المسودة 0.6 | `docs/proposals/phase-1-implementation-plan.md` | بانتظار الاعتماد النهائي |
 | 2026-11-17 | Ali | توزيع الفريق: Gemini للتصميم ويملك `design/`، Claude Code مهندس رئيسي، Copilot مراجع فقط، ChatGPT مدير منتج ومشرف تقني، والقرار النهائي لـ Ali | `AGENTS.md` | تم |
 | 2026-11-17 | Ali | صلاحية الكتابة للجميع بشرط الإخطار أولاً (Issue بقالب «إخطار»)؛ حرية كاملة لـ Claude، وChatGPT يراجع بعده | `AGENTS.md`، `.github/ISSUE_TEMPLATE/notice.md` | تم |
+| 2026-11-17 | GitHub Copilot | مسودة Phase 1 0.7 بعد مراجعة ChatGPT: صلاحيات schema والتسلسلات و`ALTER DEFAULT PRIVILEGES` وتهيئة Alembic واختبارات تراجع آلية؛ دون كود أو migrations (إخطار [#16](https://github.com/aliyasir114-sys/dolab/issues/16)) | `docs/proposals/phase-1-implementation-plan.md`, `docs/WORKLOG.md` | بانتظار اعتماد المالك |
 
 ## التالي / Next (Claude)
 
 نطاق التجربة الأولى (قرار المالك 2026-11-16): الدولاب اليدوي فقط.
 
-**متوقف عن أي كود أو تنفيذ أو واجهات حتى يصدر اعتماد صريح ونهائي لخطة المرحلة الأولى (المسودة 0.6). لا كود ولا ترحيلات.**
+**متوقف عن أي كود أو تنفيذ أو واجهات حتى يصدر اعتماد صريح ونهائي لخطة المرحلة الأولى (المسودة 0.7). لا كود ولا ترحيلات.**
 
 بعد الاعتماد، الترتيب في الخطة (القسم 7): A تقوية الخادم، B قاعدة البيانات، C البنية المشتركة، D عقد المزامنة، E OpenAPI والعملاء، F الموقع، G Android، H staging والتجربة.
 
