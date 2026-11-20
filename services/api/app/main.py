@@ -4,14 +4,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .db import Base, engine
+from .db import Base, engine, is_sqlite
 from .routers import auth, dashboard, donations, items, photos
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Development convenience. Production schema changes go through migrations (not set up yet).
-    Base.metadata.create_all(engine)
+    # SQLite is for local development and the quick test run only: create its tables here.
+    # PostgreSQL tables come from the migrations alone (alembic upgrade head, run by the deploy
+    # identity before the server starts); the API role cannot create tables there at all.
+    if is_sqlite:
+        Base.metadata.create_all(engine)
     yield
 
 
