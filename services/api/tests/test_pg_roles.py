@@ -449,7 +449,11 @@ def test_db23_api_connection():
 
     with connect(E.APP) as conn:
         assert value(conn, "SHOW search_path") == "pg_catalog, dolab"
-        assert value(conn, "SELECT to_regclass('items')::text") == "dolab.items"
+        # The unqualified name resolves to dolab.items (regclass text drops a visible schema).
+        assert value(
+            conn, "SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE c.oid = to_regclass('items')"
+        ) == "dolab"
         assert denied(conn, "CREATE TABLE items_copy (i int)")
     compiled = str(select(Item.id).compile(dialect=postgresql.dialect()))
     assert "FROM dolab.items" in compiled

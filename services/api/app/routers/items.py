@@ -93,9 +93,10 @@ def delete_item(item_id: str, user: CurrentUser, db: Db) -> Response:
     db.execute(delete(ItemStatusChange).where(ItemStatusChange.item_id == item.id))
     db.execute(delete(DonationItem).where(DonationItem.item_id == item.id))
     photos = list(db.scalars(select(ItemPhoto).where(ItemPhoto.item_id == item.id)))
-    for photo in photos:
-        db.delete(photo)
-    db.delete(item)
+    # Explicit statements in dependency order: the models declare no relationships, so the ORM
+    # would not know the photos must go before the item (PostgreSQL enforces the foreign key).
+    db.execute(delete(ItemPhoto).where(ItemPhoto.item_id == item.id))
+    db.execute(delete(Item).where(Item.id == item.id))
     db.commit()
     delete_photo_files(photos)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
