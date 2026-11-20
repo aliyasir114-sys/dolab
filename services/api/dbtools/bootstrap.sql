@@ -5,8 +5,10 @@
 --
 --     psql "$BOOTSTRAP_URL" -v ON_ERROR_STOP=1 -f dbtools/bootstrap.sql
 --
--- Safe to run again: it creates what is missing and resets attributes, memberships and grants
--- to the values below. It sets no passwords; the infrastructure sets those separately.
+-- Safe to run again, also on a live database: it creates what is missing and resets attributes,
+-- memberships and grants to the values below, all in one transaction, so the API never loses
+-- access half-way and a failure changes nothing. It never touches tables or their data.
+-- It sets no passwords; the infrastructure sets those separately.
 --
 -- Roles (cluster-wide, all dedicated to DOLAB):
 --   dolab_schema_owner  NOLOGIN. Owns the dolab schema and every ordinary object in it.
@@ -16,6 +18,8 @@
 --   dolab_reconciler    LOGIN, CONNECTION LIMIT 2. The reconciliation job (step C).
 
 \set QUIET on
+
+BEGIN;
 
 DO $roles$
 DECLARE
@@ -92,3 +96,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE dolab_schema_owner REVOKE EXECUTE ON FUNCTIONS
 ALTER DEFAULT PRIVILEGES FOR ROLE dolab_schema_owner REVOKE USAGE ON TYPES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE dolab_deleter REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE dolab_deleter REVOKE USAGE ON TYPES FROM PUBLIC;
+
+COMMIT;

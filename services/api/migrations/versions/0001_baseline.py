@@ -6,7 +6,9 @@ Create Date: 2026-11-20
 
 Written by hand to match app/models.py exactly; CI runs `alembic check` to prove it.
 No PostgreSQL database has been deployed before this migration, so there is nothing to stamp.
-A local PostgreSQL made earlier by create_all (tables in "public") must be recreated.
+A PostgreSQL made earlier by the server's create_all has its tables in "public". This migration
+refuses to run there instead of creating a second, empty set of tables beside the old data:
+such a database must be recreated (or its data copied by hand) before migrating.
 
 Downgrade drops every table and all data in them. It exists for tests and for an empty
 database; it is never run on production.
@@ -37,7 +39,41 @@ def _index(table: str, column: str, unique: bool = False) -> None:
     op.create_index(f"ix_{table}_{column}", table, [column], unique=unique, schema=S)
 
 
+TABLES = (
+    "users",
+    "refresh_tokens",
+    "password_reset_tokens",
+    "profiles",
+    "items",
+    "item_photos",
+    "item_status_changes",
+    "wear_logs",
+    "donations",
+    "donation_items",
+)
+
+
+def _refuse_pre_migration_tables() -> None:
+    # Read the catalog, not the tables: the migration identity has no rights on "public".
+    found = op.get_bind().execute(
+        sa.text(
+            "SELECT string_agg(n.nspname || '.' || c.relname, ', ' ORDER BY c.relname) "
+            "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE c.relkind IN ('r', 'p') AND c.relname = ANY(:names) "
+            "AND n.nspname NOT IN ('dolab', 'pg_catalog', 'information_schema')"
+        ),
+        {"names": list(TABLES)},
+    ).scalar()
+    if found:
+        raise RuntimeError(
+            f"DOLAB tables already exist outside the dolab schema ({found}), probably made by an "
+            "older server with create_all. The baseline would not move their data. Recreate the "
+            "database, or copy the data into dolab by hand, then migrate."
+        )
+
+
 def upgrade() -> None:
+    _refuse_pre_migration_tables()
     op.create_table(
         "users",
         sa.Column("id", ID, nullable=False),
@@ -203,16 +239,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in (
-        "donation_items",
-        "donations",
-        "wear_logs",
-        "item_status_changes",
-        "item_photos",
-        "items",
-        "profiles",
-        "password_reset_tokens",
-        "refresh_tokens",
-        "users",
-    ):
+    for table in reversed(TABLES):
         op.drop_table(table, schema=S)

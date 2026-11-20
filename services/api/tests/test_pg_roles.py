@@ -106,30 +106,33 @@ _ACL_SQL = """
     FROM ({objects}) o, aclexplode(coalesce(o.acl, acldefault(o.kind, o.owner))) a
     WHERE a.grantee <> o.owner
 """
+# Objects that belong to an extension (pg_depend deptype 'e') are not application objects (DB17).
+_NOT_EXTENSION = """
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = '{catalog}'::regclass
+                      AND d.objid = {oid} AND d.deptype = 'e')
+"""
 _TABLES = """
     SELECT c.relname AS obj, c.relacl AS acl, 'r'::"char" AS kind, c.relowner AS owner
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'dolab' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-"""
+""" + _NOT_EXTENSION.format(catalog="pg_class", oid="c.oid")
 _SEQUENCES = """
     SELECT c.relname AS obj, c.relacl AS acl, 's'::"char" AS kind, c.relowner AS owner
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'dolab' AND c.relkind = 'S'
-"""
+""" + _NOT_EXTENSION.format(catalog="pg_class", oid="c.oid")
 _FUNCTIONS = """
     SELECT p.oid::regprocedure::text AS obj, p.proacl AS acl, 'f'::"char" AS kind, p.proowner AS owner
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'dolab'
-      AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass
-                      AND d.objid = p.oid AND d.deptype = 'e')
-"""
+""" + _NOT_EXTENSION.format(catalog="pg_proc", oid="p.oid")
 # Standalone types only: not the row type of a table and not an array type.
 _TYPES = """
     SELECT t.typname AS obj, t.typacl AS acl, 'T'::"char" AS kind, t.typowner AS owner
     FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
     LEFT JOIN pg_class c ON c.oid = t.typrelid
     WHERE n.nspname = 'dolab' AND t.typcategory <> 'A' AND (t.typrelid = 0 OR c.relkind = 'c')
-"""
+""" + _NOT_EXTENSION.format(catalog="pg_type", oid="t.oid")
 
 
 def acl(conn, objects_sql: str) -> dict[str, dict[str, set[str]]]:
@@ -318,20 +321,27 @@ def test_db16_new_objects_get_no_default_grants(scratch_db):
         conn.execute(f"SET ROLE {E.OWNER}")
         conn.execute(f"GRANT CREATE ON SCHEMA dolab TO {E.DELETER}")
         conn.execute(f"SET ROLE {E.DELETER}")
+        conn.execute("CREATE TABLE dolab.t2 (i int)")
+        conn.execute("CREATE SEQUENCE dolab.s2")
         conn.execute("CREATE TYPE dolab.ty2 AS ENUM ('b')")
         conn.execute(f"SET ROLE {E.OWNER}")
         conn.execute(f"REVOKE CREATE ON SCHEMA dolab FROM {E.DELETER}")
         conn.commit()
     with connect(database=scratch_db) as conn:
-        assert acl(conn, _TABLES) == {"t": {}}
-        assert acl(conn, _SEQUENCES) == {"s": {}}
+        assert acl(conn, _TABLES) == {"t": {}, "t2": {}}
+        assert acl(conn, _SEQUENCES) == {"s": {}, "s2": {}}
+        assert owners(conn, _TABLES) == {"t": E.OWNER, "t2": E.DELETER}
         assert acl(conn, _FUNCTIONS) == {"dolab.f()": {}, "dolab.g()": {}}
         assert acl(conn, _TYPES) == {"ty": {}, "ty2": {}}
-        for role in (*E.OPERATING_ROLES, "public"):
-            for p in PRIVILEGES:
-                assert value(conn, "SELECT has_table_privilege(%s, 'dolab.t', %s)", role, p) is False
-            for p in ("USAGE", "SELECT", "UPDATE"):
-                assert value(conn, "SELECT has_sequence_privilege(%s, 'dolab.s', %s)", role, p) is False
+        # Every role other than the object's own creator: no rights at all.
+        for table, sequence, creator in (("dolab.t", "dolab.s", E.OWNER), ("dolab.t2", "dolab.s2", E.DELETER)):
+            for role in (*E.OPERATING_ROLES, "public"):
+                if role == creator:
+                    continue
+                for p in PRIVILEGES:
+                    assert value(conn, "SELECT has_table_privilege(%s, %s, %s)", role, table, p) is False
+                for p in ("USAGE", "SELECT", "UPDATE"):
+                    assert value(conn, "SELECT has_sequence_privilege(%s, %s, %s)", role, sequence, p) is False
         for role in (E.APP, E.RECONCILER, "public"):
             for function in ("dolab.f()", "dolab.g()"):
                 assert value(conn, "SELECT has_function_privilege(%s, %s, 'EXECUTE')", role, function) is False
@@ -405,13 +415,19 @@ def test_deleter_helper_refuses_unsafe_functions():
 
 # ---------------------------------------------------------------- migrations
 
-def test_db22_migrations_on_empty_database_as_deploy(scratch_db, monkeypatch):
-    from alembic import command
+def _alembic(scratch_db: str, monkeypatch):
     from alembic.config import Config
 
     monkeypatch.setenv("DOLAB_MIGRATION_URL", _sqlalchemy_url(E.DEPLOY, scratch_db))
     config = Config(str(API_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(API_DIR / "migrations"))
+    return config
+
+
+def test_db22_migrations_on_empty_database_as_deploy(scratch_db, monkeypatch):
+    from alembic import command
+
+    config = _alembic(scratch_db, monkeypatch)
 
     command.upgrade(config, "0001_baseline")
     with connect(database=scratch_db) as conn:
@@ -439,6 +455,97 @@ def test_db22_migrations_on_empty_database_as_deploy(scratch_db, monkeypatch):
     command.upgrade(config, "head")
     with connect(database=scratch_db) as conn:
         assert set(acl(conn, _TABLES)) == set(E.TABLES)
+
+
+_SAMPLE_USER = "11111111-1111-4111-8111-111111111111"
+_SAMPLE_ITEM = "22222222-2222-4222-8222-222222222222"
+
+
+def _insert_sample_data(conn) -> None:
+    """A user with an item, a wear and a status change, written as they were before migrating."""
+    conn.execute(
+        "INSERT INTO dolab.users (id, email, password_hash, locale, timezone, account_type, token_version, "
+        "created_at, updated_at) VALUES (%s, 'old@example.com', 'scrypt$x', 'ar', 'Africa/Khartoum', "
+        "'personal', 3, now(), now())", (_SAMPLE_USER,))
+    conn.execute(
+        "INSERT INTO dolab.items (id, user_id, name, category, primary_color, secondary_colors, "
+        "color_confidence, color_confirmed, status, purchase_date, purchase_price, currency, added_at, "
+        "updated_at, wear_count, last_worn_at) VALUES (%s, %s, 'جلابية بيضاء', 'jalabiya', 'white', "
+        "'[\"grey\"]', 0.9, true, 'available', '2025-05-01', 45.50, 'USD', now(), now(), 1, '2026-11-01')",
+        (_SAMPLE_ITEM, _SAMPLE_USER))
+    conn.execute(
+        "INSERT INTO dolab.wear_logs (id, user_id, item_id, worn_on) VALUES (%s, %s, %s, '2026-11-01')",
+        (str(uuid.uuid4()), _SAMPLE_USER, _SAMPLE_ITEM))
+    conn.execute(
+        "INSERT INTO dolab.item_status_changes (id, item_id, user_id, from_status, to_status, reason, "
+        "changed_at) VALUES (%s, %s, %s, NULL, 'available', 'created', now())",
+        (str(uuid.uuid4()), _SAMPLE_ITEM, _SAMPLE_USER))
+
+
+def _sample_data(conn) -> tuple:
+    return (
+        rows(conn, "SELECT email, locale, timezone, token_version FROM dolab.users"),
+        rows(conn, "SELECT name, secondary_colors::text, purchase_price::text, wear_count, last_worn_at::text "
+                   "FROM dolab.items"),
+        value(conn, "SELECT count(*) FROM dolab.wear_logs"),
+        value(conn, "SELECT count(*) FROM dolab.item_status_changes"),
+    )
+
+
+def test_migrations_keep_existing_data(scratch_db, monkeypatch):
+    """A database already in use: data written at an earlier revision survives every later
+    upgrade, a downgrade of the privileges migration and the upgrade back, and a bootstrap re-run."""
+    from alembic import command
+
+    config = _alembic(scratch_db, monkeypatch)
+    command.upgrade(config, "0001_baseline")
+    with connect(database=scratch_db) as conn:
+        _insert_sample_data(conn)
+        before = _sample_data(conn)
+    assert before[0] == [("old@example.com", "ar", "Africa/Khartoum", 3)]
+    with connect(E.APP, scratch_db) as conn:
+        assert denied(conn, "SELECT email FROM dolab.users")  # no grants before 0002
+
+    command.upgrade(config, "head")
+    with connect(database=scratch_db) as conn:
+        assert _sample_data(conn) == before
+    with connect(E.APP, scratch_db) as conn:
+        assert value(conn, "SELECT email FROM dolab.users") == "old@example.com"
+        assert value(conn, "SELECT name FROM dolab.items") == "جلابية بيضاء"
+
+    command.downgrade(config, "0001_baseline")
+    with connect(database=scratch_db) as conn:
+        assert _sample_data(conn) == before
+    with connect(E.APP, scratch_db) as conn:
+        assert denied(conn, "SELECT email FROM dolab.users")
+
+    command.upgrade(config, "head")
+    with connect(database=scratch_db) as conn:
+        acl_before = acl(conn, _TABLES)
+        conn.execute(_bootstrap_sql())  # re-run on a live, populated database
+        assert _sample_data(conn) == before
+        assert acl(conn, _TABLES) == acl_before
+        for table, expected in E.TABLES.items():
+            assert acl_before[table] == expected, table
+    with connect(E.APP, scratch_db) as conn:
+        assert value(conn, "SELECT count(*) FROM dolab.wear_logs") == 1
+
+
+def test_baseline_refuses_tables_left_by_create_all(scratch_db, monkeypatch):
+    """An old database made by create_all keeps its tables in public. The baseline stops instead
+    of creating an empty second set beside them, and changes nothing."""
+    from alembic import command
+
+    with connect(database=scratch_db) as conn:
+        conn.execute("CREATE TABLE public.users (id varchar(36) PRIMARY KEY, email varchar(254))")
+        conn.execute("INSERT INTO public.users VALUES ('u1', 'kept@example.com')")
+    config = _alembic(scratch_db, monkeypatch)
+    with pytest.raises(RuntimeError, match="public.users"):
+        command.upgrade(config, "head")
+    with connect(database=scratch_db) as conn:
+        assert value(conn, "SELECT to_regclass('dolab.alembic_version')") is None
+        assert value(conn, "SELECT count(*) FROM pg_tables WHERE schemaname = 'dolab'") == 0
+        assert value(conn, "SELECT email FROM public.users") == "kept@example.com"
 
 
 def test_db23_api_connection():
