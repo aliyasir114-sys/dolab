@@ -1,8 +1,7 @@
-from datetime import date
-
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
+from .. import clock
 from ..deps import CurrentUser, Db
 from ..models import GONE_STATUSES, Item, WearLog
 from ..schemas import DashboardOut
@@ -25,7 +24,7 @@ def dashboard(user: CurrentUser, db: Db) -> DashboardOut:
         if item.primary_color:
             colors[item.primary_color] = colors.get(item.primary_color, 0) + 1
 
-    month_start = date.today().replace(day=1)
+    month_start = clock.today_in(user.timezone).replace(day=1)
     worn_ids = set(
         db.scalars(
             select(func.distinct(WearLog.item_id)).where(WearLog.user_id == user.id, WearLog.worn_on >= month_start)

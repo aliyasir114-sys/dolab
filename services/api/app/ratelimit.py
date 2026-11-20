@@ -29,10 +29,53 @@ class FailureLimiter:
     def clear(self, key: str) -> None:
         self._failures.pop(key, None)
 
+    def clear_prefix(self, prefix: str) -> None:
+        for key in [k for k in self._failures if k.startswith(prefix)]:
+            del self._failures[key]
+
     def reset(self) -> None:
         self._failures.clear()
 
 
-login_limiter = FailureLimiter()
+class LoginLimiter:
+    """Two limits on failed sign-ins (plan 4.7).
+
+    - Per email and client address: 5 failures in 15 minutes block that address for that email.
+    - Per email from anywhere: 20 failures in an hour block the email everywhere.
+    Someone who only knows an email address therefore cannot lock its owner out with a few
+    guesses from another address; it takes a sustained attack, which the email-wide limit stops.
+    """
+
+    def __init__(self) -> None:
+        self.per_address = FailureLimiter(max_failures=5, window_seconds=900)
+        self.per_email = FailureLimiter(max_failures=20, window_seconds=3600)
+
+    def blocked(self, email: str, ip: str) -> int | None:
+        """Seconds to wait if blocked, else None."""
+        if self.per_address.blocked(f"{email}|{ip}"):
+            return self.per_address.window_seconds
+        if self.per_email.blocked(email):
+            return self.per_email.window_seconds
+        return None
+
+    def record_failure(self, email: str, ip: str) -> None:
+        self.per_address.record_failure(f"{email}|{ip}")
+        self.per_email.record_failure(email)
+
+    def clear_address(self, email: str, ip: str) -> None:
+        """After a successful sign-in from this address. The email-wide count stays."""
+        self.per_address.clear(f"{email}|{ip}")
+
+    def clear_email(self, email: str) -> None:
+        """After a password reset: everything for this email."""
+        self.per_email.clear(email)
+        self.per_address.clear_prefix(f"{email}|")
+
+    def reset(self) -> None:
+        self.per_address.reset()
+        self.per_email.reset()
+
+
+login_limiter = LoginLimiter()
 # Reset emails per address: at most 3 an hour, so the endpoint cannot be used to flood an inbox.
 reset_limiter = FailureLimiter(max_failures=3, window_seconds=3600)
