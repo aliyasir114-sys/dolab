@@ -5,7 +5,7 @@ Next.js 16 (App Router), Arabic (RTL) first and English (LTR), built on the appr
 
 ```bash
 cp .env.example .env.local      # point NEXT_PUBLIC_API_URL at the API (default http://localhost:8000/v1)
-npm install
+npm ci                          # exact versions from package-lock.json
 npm run dev                     # http://localhost:3000 -> /ar
 npm test                        # unit tests (Node's own runner, no extra packages)
 npm run build
