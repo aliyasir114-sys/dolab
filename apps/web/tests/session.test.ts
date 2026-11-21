@@ -25,10 +25,10 @@ test("login returns the access token only; the refresh token goes to the cookie"
   assert.equal(f.sent[0].url, `${API}/auth/login`);
 });
 
-test("the visitor's forwarded address reaches the API (sign-in limits per address)", async () => {
+test("a caller-supplied forwarded address is never passed to the API", async () => {
   const f = fakeFetch([() => json(401, { detail: "wrong email or password" })]);
   await handleSession("login", request({ forwardedFor: "198.51.100.7", json: { email: "a@b.co", password: "x" } }), API, f.fn);
-  assert.equal(f.sent[0].headers.get("X-Forwarded-For"), "198.51.100.7");
+  assert.equal(f.sent[0].headers.get("X-Forwarded-For"), null);
 });
 
 test("API errors pass through with Retry-After, and leave the cookie alone", async () => {

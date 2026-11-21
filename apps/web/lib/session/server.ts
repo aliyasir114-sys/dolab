@@ -36,8 +36,7 @@ export type SessionRequest = {
   fetchSite: string | null;
   /** The web app's own origin, e.g. https://dolab.example */
   selfOrigin: string;
-  /** X-Forwarded-For of the incoming request, passed on so the API's sign-in limits see the
-   *  visitor's address and not the web server's (the API must trust the right number of hops). */
+  /** Retained for compatibility; browser-supplied forwarding headers are never trusted or passed to the API. */
   forwardedFor: string | null;
   refreshToken: string | null;
   json: unknown;
@@ -54,9 +53,8 @@ export function isSameOrigin(req: Pick<SessionRequest, "origin" | "fetchSite" | 
 
 type Fetch = typeof fetch;
 
-async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown, forwardedFor: string | null) {
+async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown) {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
-  if (forwardedFor) headers["X-Forwarded-For"] = forwardedFor;
   return doFetch(apiUrl.replace(/\/+$/, "") + path, {
     method: "POST",
     headers,
@@ -100,21 +98,21 @@ export async function handleSession(action: string, req: SessionRequest, apiUrl:
         return { status: 422, body: { detail: "email and password are required" } };
       }
       const response = await callApi(doFetch, apiUrl, "/auth/login",
-        { email: input.email, password: input.password }, req.forwardedFor);
+        { email: input.email, password: input.password });
       return response.ok ? await tokens(response) : await passError(response);
     }
 
     if (action === "refresh") {
       if (!req.refreshToken) return { status: 401, body: { detail: "no session" }, cookie: null };
       const response = await callApi(doFetch, apiUrl, "/auth/refresh",
-        { refresh_token: req.refreshToken }, req.forwardedFor);
+        { refresh_token: req.refreshToken });
       // A refused refresh ends the session here too: clear the cookie.
       return response.ok ? await tokens(response) : await passError(response, response.status === 401 ? null : undefined);
     }
 
     // logout: tell the API (best effort), and always clear the cookie.
     if (req.refreshToken) {
-      await callApi(doFetch, apiUrl, "/auth/logout", { refresh_token: req.refreshToken }, req.forwardedFor)
+      await callApi(doFetch, apiUrl, "/auth/logout", { refresh_token: req.refreshToken })
         .catch(() => undefined);
     }
     return { status: 204, body: null, cookie: null };

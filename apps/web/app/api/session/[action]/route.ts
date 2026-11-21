@@ -25,7 +25,7 @@ export async function POST(request: Request, context: { params: Promise<{ action
       origin: request.headers.get("origin"),
       fetchSite: request.headers.get("sec-fetch-site"),
       selfOrigin: process.env.DOLAB_WEB_ORIGIN ?? new URL(request.url).origin,
-      forwardedFor: request.headers.get("x-forwarded-for"),
+      forwardedFor: null,
       refreshToken: jar.get(REFRESH_COOKIE)?.value ?? null,
       json,
     },

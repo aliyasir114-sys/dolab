@@ -43,6 +43,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-20 | Claude | معالجة ملاحظات مراجعة Copilot على نظام التصميم: التركيز على الشريط الداكن، قفل تمرير الخلفية، محتوى إنجليزي فعلي ووسوم `lang`، رسالة خطأ عند الفشل فقط، مراجع الخطوط؛ الفحوص 138/138 بنوعي شريط التمرير (#25) | `design-proposals/gemini/` | دُمج (#25، 2026-11-21) |
 | 2026-11-21 | Ali | **اعتماد D1**: مصفوفة صلاحيات `dolab_app` كما في `0002_app_privileges.py` دون تغيير؛ لا يشمل D2–D5 ولا دمج #22 | `services/api/migrations/versions/0002_app_privileges.py` | تم |
 | 2026-11-21 | Claude | الخطوة F، الجزء الأول: تطبيق Next.js في `apps/web` (عربي/إنجليزي)، طبقة API واحدة، جلسة بكوكي HttpOnly، شاشات الدخول والتسجيل والاستعادة والدولاب وإضافة قطعة؛ اختبار طرف إلى طرف في CI؛ وكشف حقول CORS في الخادم (إخطار #28) | `apps/web/`، `.github/workflows/web.yml`، `services/api/app/main.py` | للمراجعة |
+| 2026-11-21 | GitHub Copilot | دعم طلب الدمج #29: قفل npm، الخطوط الرسمية وترخيصاتها، وفحص المتصفح؛ إزالة تمرير رأس `X-Forwarded-For` المزوّد من المتصفح في مسارات الجلسة مع اختبار رجوع مؤكد | `apps/web/package-lock.json`, `apps/web/public/fonts/`, `apps/web/app/theme.css`, `apps/web/app/api/session/[action]/route.ts`, `apps/web/lib/session/server.ts`, `apps/web/tests/session.test.ts` | تم |
 
 ## التالي / Next (Claude)
 

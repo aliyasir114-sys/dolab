@@ -36,9 +36,9 @@ system's components only and are waiting for Gemini's review. The wardrobe follo
   that only `app/api/session/[action]` reads; the access token lives in memory. Nothing is written
   to `localStorage`, `sessionStorage`, IndexedDB or a readable cookie (P10). The session routes run
   on the Node.js runtime and set the cookie with `cookies().set()` (Next.js advisory
-  GHSA-f3mh-rxg3-f5g2), accept same-origin requests only, and pass `X-Forwarded-For` on to the API
-  so its sign-in limits see the visitor (the API's `DOLAB_TRUSTED_PROXY_HOPS` must count the web
-  server; to set in step H).
+  GHSA-f3mh-rxg3-f5g2), accept same-origin requests only, and do not pass browser-supplied
+  `X-Forwarded-For` values to the API. Per-address API limits currently rely on the API's direct
+  connection view until an audited trusted-proxy contract is established.
 - **Step C contracts are swappable.** Photos go through the `PhotoStore` interface
   (`lib/api/photos.ts`). Export and account deletion will use the same pattern when their screens
   come.
@@ -50,8 +50,6 @@ system's components only and are waiting for Gemini's review. The wardrobe follo
 
 ## For step H (deployment)
 
-- The session routes pass `X-Forwarded-For` on as received. Put the site behind a proxy that sets
-  it, and set the API's `DOLAB_TRUSTED_PROXY_HOPS` to count that proxy and the web server. If the
-  site were reachable directly, a visitor could forge the header and dodge the per-address sign-in
-  limit (the per-email limit still applies).
+- The session routes do not forward caller-supplied `X-Forwarded-For`; deployment may add a trusted
+  proxy contract separately, but until then the API's per-address limit uses the web server connection.
 - Set `DOLAB_WEB_ORIGIN` to the public origin, and the API's `DOLAB_CORS_ORIGINS` to the same.
