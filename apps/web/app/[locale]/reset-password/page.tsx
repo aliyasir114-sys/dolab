@@ -49,7 +49,7 @@ export default function ResetPasswordPage() {
         <FormError message={formError} />
         <p className="form-status" role="status">{done ? t.auth.resetDone : ""}</p>
         {done ? null : (
-          <form ref={form} className="form-stack" onSubmit={submit} noValidate>
+          <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
             <Field id="code" label={t.auth.code} autoComplete="one-time-code" dir="ltr" value={code}
               onChange={(e) => setCode(e.target.value)} error={errors.code} required />
             <Field id="password" label={t.auth.newPassword} type="password" autoComplete="new-password" hint={t.auth.passwordHint}

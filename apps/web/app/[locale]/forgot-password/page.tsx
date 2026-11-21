@@ -42,7 +42,7 @@ export default function ForgotPasswordPage() {
         <p className="muted">{t.auth.forgotIntro}</p>
         <FormError message={formError} />
         <p className="form-status" role="status">{sent ? t.auth.codeSent : ""}</p>
-        <form ref={form} className="form-stack" onSubmit={submit} noValidate>
+        <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
           <Field id="email" label={t.auth.email} type="email" autoComplete="email" dir="ltr" value={email}
             onChange={(e) => setEmail(e.target.value)} error={error} required />
           <button className="btn btn-primary" type="submit" disabled={busy} aria-busy={busy}>

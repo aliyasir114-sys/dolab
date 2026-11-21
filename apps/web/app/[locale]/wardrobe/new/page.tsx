@@ -103,7 +103,7 @@ export default function NewItemPage() {
             {t.wardrobe.title}
           </Link>
         ) : (
-          <form ref={form} className="form-stack" onSubmit={submit} noValidate>
+          <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
             <div className="form-grid">
               <Field id="name" label={t.item.name} placeholder={t.item.namePlaceholder} maxLength={120}
                 value={values.name} onChange={set("name")} error={errors.name} required />

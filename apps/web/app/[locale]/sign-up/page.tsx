@@ -57,7 +57,7 @@ export default function SignUpPage() {
       <div className="narrow">
         <h1 className="page-title">{t.auth.signUpTitle}</h1>
         <FormError message={formError} />
-        <form ref={form} className="form-stack" onSubmit={submit} noValidate>
+        <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
           <Field id="email" label={t.auth.email} type="email" autoComplete="email" dir="ltr" value={email}
             onChange={(e) => setEmail(e.target.value)} error={errors.email} required />
           <Field id="password" label={t.auth.password} type="password" autoComplete="new-password" hint={t.auth.passwordHint}

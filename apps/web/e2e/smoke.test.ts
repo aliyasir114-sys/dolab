@@ -27,6 +27,8 @@ const problems: string[] = [];
 // The browser logs every 4xx response as a console error. These are the ones the scenario
 // causes on purpose (a wrong password; a refresh with no session after signing out).
 const EXPECTED = [/status of 401/];
+// A request cut short because the page moved on (e.g. the session check before a redirect).
+const ABORTED = "net::ERR_ABORTED";
 
 before(async () => {
   mkdirSync(SHOTS, { recursive: true });
@@ -37,7 +39,9 @@ before(async () => {
     if (m.type() === "error" && !EXPECTED.some((re) => re.test(m.text()))) problems.push(`console: ${m.text()}`);
   });
   page.on("pageerror", (e) => problems.push(`script: ${e.message}`));
-  page.on("requestfailed", (r) => problems.push(`failed: ${r.url()} ${r.failure()?.errorText}`));
+  page.on("requestfailed", (r) => {
+    if (r.failure()?.errorText !== ABORTED) problems.push(`failed: ${r.url()} ${r.failure()?.errorText}`);
+  });
 });
 
 after(async () => {
@@ -62,11 +66,14 @@ async function refreshCookie() {
 test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async () => {
   await page.goto(`${WEB}/`);
   await page.waitForURL(/\/ar\/sign-in/);
+  await page.getByRole("heading", { level: 1, name: ar.auth.signInTitle }).waitFor();
   assert.equal(await page.getAttribute("html", "dir"), "rtl");
   assert.equal(await page.getAttribute("html", "lang"), "ar");
   await shot("01-sign-in-ar");
 
   await page.click(`a[href="/ar/sign-up"]`);
+  await page.waitForURL(/\/ar\/sign-up$/);
+  await page.getByRole("heading", { level: 1, name: ar.auth.signUpTitle }).waitFor();
   await page.fill("#email", EMAIL);
   await page.fill("#password", PASSWORD);
   await page.click("button[type=submit]");
@@ -86,6 +93,7 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   // Validation: an empty form shows errors and focuses the first field.
   await page.click(`a[href="/ar/wardrobe/new"]`);
   await page.waitForURL(/\/ar\/wardrobe\/new$/);
+  await page.getByRole("heading", { level: 1, name: ar.item.addTitle }).waitFor();
   await page.click("button[type=submit]");
   await page.locator("#name-error").getByText(ar.common.required).waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.id), "name");
@@ -140,11 +148,13 @@ test("English: same session, left-to-right, English text", async () => {
 test("sign out, protected pages send you to sign in, wrong password is refused", async () => {
   await page.getByRole("button", { name: en.nav.signOut }).click();
   await page.waitForURL(/\/en\/sign-in$/);
+  await page.getByRole("heading", { level: 1, name: en.auth.signInTitle }).waitFor();
   const cookie = await refreshCookie();
   assert.ok(!cookie || cookie.value === "", "refresh cookie cleared");
 
   await page.goto(`${WEB}/en/wardrobe/new`);
   await page.waitForURL(/\/en\/sign-in\?next=/);
+  await page.getByRole("heading", { level: 1, name: en.auth.signInTitle }).waitFor();
 
   await page.fill("#email", EMAIL);
   await page.fill("#password", "not-the-password");
@@ -162,6 +172,11 @@ test("the session routes refuse cross-site calls", async () => {
     headers: { Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
   });
   assert.equal(response.status(), 403);
+});
+
+test("forms post, so credentials never go into a URL even without JavaScript", async () => {
+  await page.goto(`${WEB}/en/sign-in`);
+  assert.equal(await page.getAttribute("form", "method"), "post");
 });
 
 test("no unexpected console errors, script errors or failed loads", () => {
