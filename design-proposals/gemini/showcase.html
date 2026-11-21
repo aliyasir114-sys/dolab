@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DOLAB Final Design System (Phase B)</title>
+  <link rel="stylesheet" href="styles/theme.css">
+  <style>
+    .showcase-wrapper {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .toolbar {
+      position: sticky;
+      top: 0;
+      background: var(--color-primary);
+      color: var(--color-surface);
+      padding: var(--space-m) var(--space-l);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+    }
+    .toolbar-title {
+      font-weight: 700;
+      letter-spacing: 1px;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .toolbar button {
+      background: transparent;
+      border: 1px solid var(--color-border);
+      color: var(--color-surface);
+      padding: var(--space-xs) var(--space-m);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .content-area {
+      flex: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: var(--space-xl) var(--space-m);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3xl);
+      width: 100%;
+    }
+    .section-title {
+      font-size: var(--text-h2);
+      font-weight: 700;
+      border-block-end: 1px solid var(--color-border);
+      padding-block-end: var(--space-s);
+      margin-block-end: var(--space-xl);
+    }
+    .grid-responsive {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--space-xl);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="showcase-wrapper">
+    <!-- Toolbar -->
+    <header class="toolbar surface-dark" lang="en">
+      <span class="toolbar-title">DOLAB SYSTEM</span>
+      <button type="button" onclick="toggleDirection()" aria-label="Toggle Language Direction">Toggle AR/EN</button>
+    </header>
+
+    <main class="content-area">
+
+      <!-- Typography -->
+      <section>
+        <h2 class="section-title" lang="en">Typography</h2>
+        <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+          <div style="font-size: var(--text-h1); font-weight: 700; line-height: var(--line-h1);" data-i18n="typeH1"><span lang="en">H1</span> / ماذا سترتدي اليوم؟ / <span lang="en">What to wear?</span></div>
+          <div style="font-size: var(--text-h2); font-weight: 700; line-height: var(--line-h2);" data-i18n="typeH2"><span lang="en">H2</span> / قميص أبيض كلاسيكي / <span lang="en">Classic White Shirt</span></div>
+          <div style="font-size: var(--text-h3); font-weight: 600; line-height: var(--line-h3);" data-i18n="typeH3"><span lang="en">H3</span> / إضافة قطعة جديدة / <span lang="en">Add New Item</span></div>
+          <div style="font-size: var(--text-body); font-weight: 400; line-height: var(--line-body);" data-i18n="typeBody"><span lang="en">Body</span> / دولابك في جيبك… وأناقتك تبدأ مما تملك. / <span lang="en">Your wardrobe in your pocket.</span></div>
+        </div>
+      </section>
+
+      <!-- Buttons & Links -->
+      <section>
+        <h2 class="section-title" lang="en">Buttons &amp; Interaction</h2>
+        <div class="grid-responsive">
+          <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+            <button type="button" class="btn btn-primary" data-i18n="save">حفظ القطعة <span lang="en">(Primary)</span></button>
+            <button type="button" class="btn btn-secondary" data-i18n="cancel">إلغاء <span lang="en">(Secondary)</span></button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: var(--space-m);">
+            <button type="button" class="btn btn-primary">
+              <svg class="icon-rtl-flip" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              <span data-i18n="continue">متابعة <span lang="en">(With Icon)</span></span>
+            </button>
+            <a class="btn" aria-disabled="true" role="button" tabindex="-1" data-i18n="unavailable">غير متاح <span lang="en">(Disabled Link)</span></a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Forms with Accessibility Linkage -->
+      <section>
+        <h2 class="section-title" lang="en">Form Controls &amp; Errors</h2>
+        <div class="grid-responsive">
+          <div class="form-group">
+            <label class="form-label" for="itemName" data-i18n="nameLabel">اسم القطعة</label>
+            <input type="text" id="itemName" class="input-field" placeholder="مثال: قميص كتان أسود" data-i18n-placeholder="namePlaceholder">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="itemPrice" data-i18n="priceLabel">سعر الشراء</label>
+            <div class="input-wrapper">
+              <input type="text" id="itemPrice" class="input-field" inputmode="decimal" aria-describedby="price-error">
+            </div>
+            <!-- Empty until validation fails. role="alert" announces the message when it is added,
+                 not on page load. -->
+            <div id="price-error" class="error-message" role="alert"></div>
+            <template id="price-error-content">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+              <span data-i18n="priceError">يرجى إدخال أرقام صحيحة فقط.</span>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- Cards -->
+      <section>
+        <h2 class="section-title" lang="en">Cards &amp; Containers</h2>
+        <div class="grid-responsive">
+          <div class="card">
+            <span style="font-family: var(--font-en); font-size: var(--text-caption); color: var(--color-text-sec);" lang="en">DLB-000124</span>
+            <h3 style="margin: 0; font-size: var(--text-h3); font-weight: 700;" data-i18n="cardTitle">دولابي</h3>
+            <p style="margin: 0; font-size: var(--text-caption); color: var(--color-text-sec);" data-i18n="cardMeta">120 قطعة متاحة • 3 قيد الغسيل</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modal Trigger -->
+      <section>
+        <h2 class="section-title" lang="en">Modals &amp; Dialogs</h2>
+        <button type="button" class="btn btn-secondary" onclick="openModal('deleteModal')" data-i18n="openDialog">فتح نافذة تأكيد الحذف</button>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Modal Component (Accessible) -->
+  <div id="deleteModal" class="modal-overlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle" class="modal-title" data-i18n="dialogTitle">تأكيد الحذف</h3>
+        <button type="button" class="modal-close" onclick="closeModal('deleteModal')" aria-label="إغلاق النافذة" data-i18n-aria-label="closeDialog">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" data-i18n="dialogBody">
+        هل أنت متأكد من رغبتك في حذف هذه القطعة؟ لا يمكن التراجع عن هذا الإجراء بعد تنفيذه.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('deleteModal')" data-i18n="dialogCancel">إلغاء</button>
+        <button type="button" class="btn btn-primary" onclick="closeModal('deleteModal')" data-i18n="dialogConfirm">تأكيد الحذف</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Language. The page as written is the Arabic version; English replaces the sample texts,
+    // so lang="en" is never set on Arabic content.
+    const TEXT = {
+      en: {
+        typeH1: 'H1 / What to wear today?',
+        typeH2: 'H2 / Classic white shirt',
+        typeH3: 'H3 / Add a new item',
+        typeBody: 'Body / Your wardrobe in your pocket. Style starts with what you own.',
+        save: 'Save item (Primary)',
+        cancel: 'Cancel (Secondary)',
+        continue: 'Continue (With Icon)',
+        unavailable: 'Unavailable (Disabled Link)',
+        nameLabel: 'Item name',
+        namePlaceholder: 'e.g. Black linen shirt',
+        priceLabel: 'Purchase price',
+        priceError: 'Please enter numbers only.',
+        cardTitle: 'My wardrobe',
+        cardMeta: '120 items available • 3 in the laundry',
+        openDialog: 'Open delete confirmation',
+        dialogTitle: 'Confirm deletion',
+        closeDialog: 'Close dialog',
+        dialogBody: 'Are you sure you want to delete this item? This cannot be undone.',
+        dialogCancel: 'Cancel',
+        dialogConfirm: 'Confirm deletion',
+      },
+      ar: {},
+    };
+    const errorTemplate = document.getElementById('price-error-content').content;
+    // Keep the Arabic texts exactly as the page has them.
+    for (const el of [...document.querySelectorAll('[data-i18n]'), ...errorTemplate.querySelectorAll('[data-i18n]')]) {
+      TEXT.ar[el.dataset.i18n] = el.innerHTML;
+    }
+    for (const el of document.querySelectorAll('[data-i18n-placeholder]')) {
+      TEXT.ar[el.dataset.i18nPlaceholder] = el.getAttribute('placeholder');
+    }
+    for (const el of document.querySelectorAll('[data-i18n-aria-label]')) {
+      TEXT.ar[el.dataset.i18nAriaLabel] = el.getAttribute('aria-label');
+    }
+
+    function applyLanguage(lang) {
+      const text = TEXT[lang];
+      for (const el of document.querySelectorAll('[data-i18n]')) {
+        if (lang === 'ar') el.innerHTML = text[el.dataset.i18n];  // the page's own markup
+        else el.textContent = text[el.dataset.i18n];
+      }
+      for (const el of document.querySelectorAll('[data-i18n-placeholder]')) {
+        el.setAttribute('placeholder', text[el.dataset.i18nPlaceholder]);
+      }
+      for (const el of document.querySelectorAll('[data-i18n-aria-label]')) {
+        el.setAttribute('aria-label', text[el.dataset.i18nAriaLabel]);
+      }
+    }
+
+    function toggleDirection() {
+      const html = document.documentElement;
+      const lang = html.getAttribute('dir') === 'rtl' ? 'en' : 'ar';
+      html.setAttribute('dir', lang === 'en' ? 'ltr' : 'rtl');
+      html.setAttribute('lang', lang);
+      applyLanguage(lang);
+    }
+
+    // ---- Validation. The message appears only when the value is wrong, and role="alert" on its
+    // (empty) region announces it at that moment.
+    const priceField = document.getElementById('itemPrice');
+    const priceError = document.getElementById('price-error');
+
+    function validatePrice() {
+      const value = priceField.value.trim();
+      const valid = value === '' || /^[0-9]+([.,][0-9]{1,2})?$/.test(value);
+      const shown = priceField.getAttribute('aria-invalid') === 'true';
+      if (valid && shown) {
+        priceField.removeAttribute('aria-invalid');
+        priceError.replaceChildren();
+      } else if (!valid && !shown) {
+        priceField.setAttribute('aria-invalid', 'true');
+        const content = errorTemplate.cloneNode(true);
+        const lang = document.documentElement.getAttribute('lang');
+        if (lang !== 'ar') content.querySelector('[data-i18n]').textContent = TEXT[lang].priceError;
+        priceError.replaceChildren(content);
+      }
+    }
+    // Checked when the person leaves the field; once wrong, re-checked as they type.
+    priceField.addEventListener('change', validatePrice);
+    priceField.addEventListener('input', () => {
+      if (priceField.getAttribute('aria-invalid') === 'true') validatePrice();
+    });
+
+    let previouslyFocusedElement = null;
+    let activeModal = null;
+    let savedScrollY = 0;
+    // Everything except the dialog. While a dialog is open it is inert: no clicks, no focus,
+    // and hidden from screen readers.
+    const pageContent = document.querySelector('.showcase-wrapper');
+
+    function getFocusableElements(container) {
+      return Array.from(
+        container.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      );
+    }
+
+    function openModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      previouslyFocusedElement = document.activeElement;
+      activeModal = modal;
+      // The page behind does not scroll while the dialog is open (theme.css: .is-scroll-locked).
+      savedScrollY = window.scrollY;
+      const html = document.documentElement;
+      html.classList.toggle('has-classic-scrollbar', window.innerWidth > html.clientWidth);
+      html.classList.add('is-scroll-locked');
+      modal.setAttribute('aria-hidden', 'false');
+      pageContent.inert = true;
+
+      const focusable = getFocusableElements(modal);
+      if (focusable.length) {
+        setTimeout(() => focusable[0].focus({ preventScroll: true }), 50);
+      }
+
+      document.addEventListener('keydown', handleModalKeydown);
+      document.addEventListener('focusin', keepFocusInModal);
+    }
+
+    // Focus that leaves the dialog (for example after a click on the backdrop) comes back.
+    function keepFocusInModal(e) {
+      if (activeModal && !activeModal.contains(e.target)) {
+        const focusable = getFocusableElements(activeModal);
+        if (focusable.length) focusable[0].focus();
+      }
+    }
+
+    function closeModal(id) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      modal.setAttribute('aria-hidden', 'true');
+      activeModal = null;
+      document.removeEventListener('keydown', handleModalKeydown);
+      document.removeEventListener('focusin', keepFocusInModal);
+      // The page must be interactive again before focus can return to it.
+      pageContent.inert = false;
+      document.documentElement.classList.remove('is-scroll-locked', 'has-classic-scrollbar');
+      window.scrollTo(0, savedScrollY);
+      if (previouslyFocusedElement) {
+        // Back where the person was: returning focus must not scroll the page.
+        previouslyFocusedElement.focus({ preventScroll: true });
+      }
+    }
+
+    function handleModalKeydown(e) {
+      if (!activeModal) return;
+
+      if (e.key === 'Escape') {
+        closeModal(activeModal.id);
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = getFocusableElements(activeModal);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        // Focus is outside the dialog (e.g. on the backdrop or the page body): bring it in.
+        if (!activeModal.contains(document.activeElement)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+          return;
+        }
+
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
