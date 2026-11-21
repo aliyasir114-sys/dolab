@@ -1,9 +1,13 @@
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from app.db import SessionLocal
 from app.mailer import mailer
 from app.models import PasswordResetToken, RefreshToken, utcnow
+from app.routers import auth as auth_router
 from app.security import create_token
 
 EMAIL = "ali@example.com"
@@ -67,6 +71,33 @@ def test_reuse_on_one_device_does_not_end_other_devices(client):
     client.post("/auth/refresh", json={"refresh_token": phone["refresh_token"]})
     client.post("/auth/refresh", json={"refresh_token": phone["refresh_token"]})  # reuse on the phone
     assert client.post("/auth/refresh", json={"refresh_token": laptop["refresh_token"]}).status_code == 200
+
+
+def test_concurrent_refresh_uses_a_token_once_and_revokes_the_family(client, monkeypatch):
+    register(client)
+    first = login(client)
+    barrier = threading.Barrier(2)
+    original_issue_tokens = auth_router._issue_tokens
+
+    def slow_issue_tokens(db, user, family_id=None):
+        time.sleep(0.25)
+        return original_issue_tokens(db, user, family_id)
+
+    monkeypatch.setattr(auth_router, "_issue_tokens", slow_issue_tokens)
+
+    def refresh_once(_):
+        barrier.wait()
+        return client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(refresh_once, range(2)))
+
+    successful = [response for response in responses if response.status_code == 200]
+    refused = [response for response in responses if response.status_code == 401]
+    assert len(successful) == 1
+    assert len(refused) == 1
+    replacement = successful[0].json()["refresh_token"]
+    assert client.post("/auth/refresh", json={"refresh_token": replacement}).status_code == 401
 
 
 def test_expired_and_unknown_refresh_tokens_are_refused(client):
