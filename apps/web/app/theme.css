@@ -1,0 +1,365 @@
+/*
+ * DOLAB Unified Design System
+ * Branch: design/gemini-creative/phase-b-system-final
+ */
+
+/* 1. Fonts (both SIL Open Font License 1.1)
+ *
+ * Official unmodified WOFF2 assets are in ../public/fonts/.
+ * Licenses are in ../public/fonts/licenses/.
+ */
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../public/fonts/IBMPlexSansArabic-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../public/fonts/IBMPlexSansArabic-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../public/fonts/IBMPlexSansArabic-Bold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../public/fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../public/fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+}
+
+:root {
+  /* 2. Colors - Strict Palette */
+  --color-primary: #080808;
+  --color-bg: #F5F5F5;
+  /* Approved palette: surfaces use the DOLAB white, not pure #FFFFFF (Ali, 2026-11-20). */
+  --color-surface: #F5F5F5;
+
+  --color-text-main: #080808;
+  --color-text-sec: #5E5E5E;
+  --color-text-placeholder: #6E6E6E;  /* 4.68:1 on #F5F5F5 (WCAG AA text) */
+
+  --color-border: #D9D9D9;            /* decorative dividers and card edges */
+  --color-field-border: #858585;      /* form field edges: 3.38:1 on #F5F5F5 (WCAG 1.4.11) */
+  --color-text-disabled: #A8A8A8;     /* disabled controls are exempt from contrast rules */
+  --color-disabled: #E6E6E6;
+  --color-overlay: rgba(8, 8, 8, 0.6);
+
+  /* Layers: a dialog sits above every page element, sticky headers included. */
+  --z-modal: 1000;
+
+  /* 3. Spacing - Strict 8pt Grid System */
+  --space-xs: 4px;   /* Half-step */
+  --space-s: 8px;    /* Base step */
+  --space-m: 16px;
+  --space-l: 24px;
+  --space-xl: 32px;
+  --space-2xl: 40px;
+  --space-3xl: 48px;
+  --space-4xl: 64px;
+
+  /* 4. Typography Families */
+  --font-ar: 'IBM Plex Sans Arabic', sans-serif;
+  --font-en: 'Space Grotesk', sans-serif;
+
+  /* 5. Base Typography Scale (Mobile First) */
+  --text-h1: 32px;
+  --line-h1: 1.25;
+
+  --text-h2: 22px;
+  --line-h2: 1.3;
+
+  --text-h3: 17px;
+  --line-h3: 1.4;
+
+  --text-body: 15px;
+  --line-body: 1.6;
+
+  --text-caption: 12px;
+  --line-caption: 1.5;
+
+  /* 6. Component Dimensions */
+  --height-interactive: 48px;
+  --radius-strict: 0px;
+  --transition-fast: 0.2s ease-in-out;
+}
+
+/* Responsive Overrides */
+@media (min-width: 768px) {
+  :root {
+    --text-h1: 40px;
+    --text-body: 16px;
+    --text-caption: 13px;
+    --height-interactive: 52px;
+  }
+}
+
+/* 7. Global Reset & Direction */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-main);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[dir="rtl"] { font-family: var(--font-ar); }
+[dir="ltr"] { font-family: var(--font-en); }
+
+/* Directional icons are drawn pointing forward in English (right) and mirrored for Arabic. */
+[dir="rtl"] .icon-rtl-flip {
+  transform: scaleX(-1);
+}
+
+/* 8. Accessibility (A11y) */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* On a dark surface (such as a black toolbar) the outline turns light. Only its colour changes,
+   so nothing moves or resizes. */
+.surface-dark :focus-visible {
+  outline-color: var(--color-surface);
+}
+
+/* While a dialog is open the page behind does not scroll; the script saves the scroll position
+   and restores it on close. Where the scrollbar takes up room (classic scrollbars), its space is
+   kept so the layout does not shift. Overlay scrollbars take none, so nothing is reserved. */
+html.is-scroll-locked {
+  overflow: hidden;
+}
+html.is-scroll-locked.has-classic-scrollbar {
+  scrollbar-gutter: stable;
+}
+
+/* 9. Components: Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-s);
+  min-height: var(--height-interactive);
+  padding-inline: var(--space-xl);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: var(--radius-strict);
+  text-decoration: none;
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast);
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: var(--color-surface);
+  border: 1px solid var(--color-primary);
+}
+.btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: transparent;
+  color: var(--color-primary);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+.btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: var(--color-primary);
+  color: var(--color-surface);
+}
+
+/* Hard disable logic */
+.btn:disabled, .btn[aria-disabled="true"] {
+  background-color: var(--color-disabled);
+  color: var(--color-text-disabled);
+  border: 1px solid var(--color-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* 10. Components: Form Inputs */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  width: 100%;
+}
+
+.form-label {
+  font-size: var(--text-caption);
+  color: var(--color-text-sec);
+  font-weight: 600;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-field {
+  width: 100%;
+  height: var(--height-interactive);
+  padding-inline: var(--space-m);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-main);
+  font-family: inherit;
+  font-size: var(--text-body);
+  border-radius: var(--radius-strict);
+  transition: border-color var(--transition-fast);
+}
+
+.input-field::placeholder { color: var(--color-text-placeholder); }
+/* Focus: the edge turns black and doubles to 2px without moving the layout. */
+.input-field:focus {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+  outline: none;
+}
+
+.input-field[aria-invalid="true"] {
+  border: 2px solid var(--color-primary);
+  padding-inline-end: var(--space-3xl);
+}
+/* An invalid field already has a 2px edge, so its focus adds an outline outside it. */
+.input-field[aria-invalid="true"]:focus {
+  box-shadow: none;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-caption);
+  color: var(--color-primary);
+  font-weight: 700;
+  margin-block-start: var(--space-xs);
+}
+
+/* 11. Components: Cards */
+.card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: var(--space-l);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+/* 12. Components: Modals */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-m);
+  z-index: var(--z-modal);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-fast), visibility var(--transition-fast);
+}
+
+.modal-overlay[aria-hidden="false"] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.modal-content {
+  background-color: var(--color-bg);
+  width: 100%;
+  max-width: 480px;
+  border: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  transform: scale(0.98);
+  transition: transform var(--transition-fast);
+}
+
+.modal-overlay[aria-hidden="false"] .modal-content {
+  transform: scale(1);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-l) var(--space-l) var(--space-m);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.modal-title {
+  margin: 0;
+  font-size: var(--text-h3);
+  font-weight: 700;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--color-text-sec);
+  cursor: pointer;
+  padding: var(--space-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast);
+}
+.modal-close:hover {
+  color: var(--color-primary);
+}
+
+.modal-body {
+  padding: var(--space-l);
+  font-size: var(--text-body);
+  line-height: var(--line-body);
+}
+
+.modal-footer {
+  padding: var(--space-m) var(--space-l) var(--space-l);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-m);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .input-field,
+  .modal-overlay,
+  .modal-content,
+  .modal-close {
+    transition: none;
+  }
+}
