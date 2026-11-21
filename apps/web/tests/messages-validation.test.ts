@@ -20,12 +20,13 @@ test("Arabic and English have the same keys, none empty", () => {
 
 test("English text has no Arabic letters, and the same placeholders as Arabic", () => {
   const arabic = /[؀-ۿ]/;
-  const leaves = (m: typeof ar) => keys(m).map((k) => [k, k.split(".").reduce<unknown>((o, p) => (o as Record<string, unknown>)[p], m) as string]);
+  const leaves = (m: typeof ar): Array<[string, string]> =>
+    keys(m).map((k) => [k, k.split(".").reduce<unknown>((o, p) => (o as Record<string, unknown>)[p], m) as string]);
   const arMap = new Map(leaves(ar));
   for (const [key, text] of leaves(en)) {
     if (key !== "nav.otherLanguage" && key !== "nav.otherLanguageName") assert.ok(!arabic.test(text), key);
     const holes = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join();
-    assert.equal(holes(text), holes(arMap.get(key)!), key);
+    assert.equal(holes(text), holes(arMap.get(key) ?? ""), key);
   }
 });
 
