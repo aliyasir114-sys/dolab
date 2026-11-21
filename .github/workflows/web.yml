@@ -1,0 +1,33 @@
+name: Web
+
+on:
+  push:
+    paths: ["apps/web/**", ".github/workflows/web.yml"]
+  pull_request:
+    paths: ["apps/web/**", ".github/workflows/web.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: https://api.dolab.test/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # No lockfile yet (see the PR): install from package.json. Switch to `npm ci` once it exists.
+      - run: npm install --no-audit --no-fund
+      - name: Unit tests
+        run: npm test
+      - name: Build (includes the TypeScript check)
+        run: npm run build
+      - name: Known vulnerabilities in runtime packages
+        run: npm audit --omit=dev --audit-level=high
