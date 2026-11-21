@@ -49,6 +49,8 @@ after(async () => {
 });
 
 async function shot(name: string) {
+  // Pointer out of the way, so no button is caught mid-hover.
+  await page.mouse.move(0, 0);
   await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
 }
 
@@ -120,6 +122,15 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await page.setInputFiles("#photos", { name: "shirt.png", mimeType: "image/png", buffer: PNG });
   await page.locator("#photos-summary").getByText("صورة واحدة: shirt.png").waitFor();
   await shot("04-add-item-filled-ar");
+  // The save button: black with readable text at rest, and no in-between grey on hover.
+  const save = page.getByRole("button", { name: ar.item.save });
+  const look = () => save.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return [s.backgroundColor, s.color, s.transitionProperty];
+  });
+  const [bg, fg, animated] = await look();
+  assert.deepEqual([bg, fg], ["rgb(8, 8, 8)", "rgb(245, 245, 245)"]);
+  assert.ok(!/(^|, )(all|color|background-color)(,|$)/.test(animated), animated);
   await page.click("button[type=submit]");
   await page.waitForURL(/\/ar\/wardrobe$/);
 
@@ -185,6 +196,10 @@ test("screens for design review (screenshots only)", async () => {
   // Signed in, on /en/wardrobe/new after the previous test.
   await page.getByRole("heading", { level: 1, name: en.item.addTitle }).waitFor();
   await shot("08-add-item-en");
+  // Fields on one row line up: the currency label stays on one line.
+  const tops = await page.locator("#purchaseDate, #price, #currency").evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().top)));
+  assert.equal(new Set(tops).size, 1, `input tops ${tops}`);
   const screens: Array<[string, string, string]> = [
     ["09-sign-up-ar", "/ar/sign-up", ar.auth.signUpTitle],
     ["10-sign-up-en", "/en/sign-up", en.auth.signUpTitle],

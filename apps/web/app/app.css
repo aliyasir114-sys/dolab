@@ -81,12 +81,18 @@ select.input-field {
 .file-input[aria-invalid="true"] + .file-button { border-width: 2px; }
 .file-summary { font-size: var(--text-caption); color: var(--color-text-sec); overflow-wrap: anywhere; }
 
-/* Price and currency share one row. */
-.field-pair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--space-m); align-items: start; }
+/* Price and currency share one row, in equal halves so "Currency (optional)" stays on one line
+   and the boxes line up with the rest of the row (Gemini's review of PR #33). */
+.field-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-m); align-items: start; }
 
 /* While a form is being sent the button keeps its full contrast (it is not disabled; the form
    ignores repeated presses). */
 .btn[aria-busy="true"] { cursor: progress; }
+
+/* Hover swaps background and text colours instantly. Animating both at once (theme.css, 0.2s)
+   passes through a moment where background and text are the same grey and the label cannot be
+   read (Gemini's review of PR #33). The border still eases. */
+.btn { transition: border-color var(--transition-fast); }
 
 /* Empty wardrobe: a card centred in the list area, with a direct way to add the first item. */
 .empty-state { align-items: center; text-align: center; padding: var(--space-3xl) var(--space-l); gap: var(--space-l); }
