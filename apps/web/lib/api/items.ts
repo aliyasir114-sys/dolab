@@ -10,7 +10,10 @@ export async function listItems(
   const { data, headers } = await api.request<Item[]>("GET", "/items", {
     query: { status: filter.status, limit: filter.limit ?? 50, offset: filter.offset ?? 0 },
   });
-  const total = Number(headers.get("X-Total-Count"));
+  // Readable cross-origin only because the API exposes it (CORS expose_headers). If it is ever
+  // missing, do not read it as 0.
+  const raw = headers.get("X-Total-Count");
+  const total = raw === null || raw.trim() === "" ? Number.NaN : Number(raw);
   return { items: data, total: Number.isFinite(total) ? total : data.length };
 }
 

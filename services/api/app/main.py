@@ -27,6 +27,8 @@ if settings.cors_origins:
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        # Response headers the web app reads: the item count and how long to wait after a 429.
+        expose_headers=["X-Total-Count", "Retry-After"],
         max_age=600,
     )
 # All endpoints live under /v1 so the contract can change later without breaking old clients.

@@ -34,6 +34,12 @@ test("sends the access token and reads the total count", async () => {
   assert.equal(f.sent[0].url, `${BASE}/items?status=laundry&limit=50&offset=0`);
 });
 
+test("a missing count header is not read as zero", async () => {
+  const f = fakeFetch([() => json(200, [{ id: "a" }, { id: "b" }])]);
+  const api = createApiClient({ baseUrl: BASE, tokens: tokens("t"), fetch: f.fn });
+  assert.equal((await listItems(api)).total, 2);
+});
+
 test("leaves out empty filters", async () => {
   const f = fakeFetch([() => json(200, [])]);
   const api = createApiClient({ baseUrl: BASE + "/", tokens: tokens("t"), fetch: f.fn });

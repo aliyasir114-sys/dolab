@@ -244,6 +244,14 @@ def test_cors_allows_only_the_configured_origin(client):
     assert "access-control-allow-origin" not in other.headers
 
 
+def test_cors_lets_the_web_app_read_the_count_and_retry_headers(client, signup):
+    headers = {**signup(), "Origin": "https://web.dolab.test"}
+    response = client.get("/items", headers=headers)
+    assert response.status_code == 200
+    exposed = {h.strip().lower() for h in response.headers.get("access-control-expose-headers", "").split(",")}
+    assert {"x-total-count", "retry-after"} <= exposed
+
+
 @pytest.mark.parametrize("raw", ["*", "https://*.dolab.app", "http://evil.example"])
 def test_cors_refuses_wildcards_and_plain_http(raw):
     with pytest.raises(RuntimeError):
