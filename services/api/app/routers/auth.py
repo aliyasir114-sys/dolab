@@ -110,24 +110,35 @@ def login(body: LoginIn, db: Db, request: Request) -> TokenOut:
 @router.post("/auth/refresh", response_model=TokenOut)
 def refresh(body: RefreshIn, db: Db) -> TokenOut:
     """Swap a refresh token for a new pair. Each refresh token works once."""
-    stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash(body.refresh_token)))
-    if stored is None:
-        raise _INVALID_REFRESH
-    if stored.revoked_at is not None:
-        # A used token came back: it was copied. End every session descended from that sign-in.
-        db.execute(
-            update(RefreshToken)
-            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=utcnow())
+    token_hash_value = token_hash(body.refresh_token)
+    now = utcnow()
+    claimed = db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.token_hash == token_hash_value,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
         )
-        db.commit()
+        .values(revoked_at=now)
+    )
+    if claimed.rowcount != 1:
+        stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash_value))
+        if stored is not None and stored.revoked_at is not None:
+            # A used token came back: it was copied. End every session descended from that sign-in.
+            db.execute(
+                update(RefreshToken)
+                .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
+                .values(revoked_at=utcnow())
+            )
+            db.commit()
         raise _INVALID_REFRESH
-    if as_utc(stored.expires_at) <= utcnow():
+
+    stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == token_hash_value))
+    if stored is None:
         raise _INVALID_REFRESH
     user = db.get(User, stored.user_id)
     if user is None:
         raise _INVALID_REFRESH
-    stored.revoked_at = utcnow()
     tokens = _issue_tokens(db, user, family_id=stored.family_id)
     db.commit()
     return tokens
