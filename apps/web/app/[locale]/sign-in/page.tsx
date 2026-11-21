@@ -27,6 +27,7 @@ export default function SignInPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return; // already sending
     const found: typeof errors = {};
     if (!looksLikeEmail(email)) found.email = t.auth.badEmail;
     if (!password) found.password = t.common.required;
@@ -50,10 +51,10 @@ export default function SignInPage() {
         <FormError message={formError} />
         <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
           <Field id="email" label={t.auth.email} type="email" autoComplete="email" dir="ltr" value={email}
-            onChange={(e) => setEmail(e.target.value)} error={errors.email} required />
+            onChange={(e) => { setEmail(e.target.value); setErrors((x) => ({ ...x, email: undefined })); }} error={errors.email} required />
           <Field id="password" label={t.auth.password} type="password" autoComplete="current-password" value={password}
-            onChange={(e) => setPassword(e.target.value)} error={errors.password} required />
-          <button className="btn btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            onChange={(e) => { setPassword(e.target.value); setErrors((x) => ({ ...x, password: undefined })); }} error={errors.password} required />
+          <button className="btn btn-primary" type="submit" aria-busy={busy}>
             {busy ? t.common.loading : t.auth.signIn}
           </button>
         </form>

@@ -32,6 +32,12 @@ function ErrorRegion({ id, error }: { id: string; error?: string | null }) {
 
 type Common = { id: string; label: string; hint?: string; error?: string | null; optional?: string };
 
+// While a field shows an error, its hint is hidden so the two do not repeat each other (Gemini's
+// review of part 1); the error alone describes the field.
+function shownHint(hint?: string, error?: string | null) {
+  return error ? undefined : hint;
+}
+
 function describedBy(id: string, hint?: string) {
   return [hint ? `${id}-hint` : null, `${id}-error`].filter(Boolean).join(" ");
 }
@@ -45,7 +51,8 @@ function Label({ id, label, optional }: { id: string; label: string; optional?: 
   );
 }
 
-export function Field({ id, label, hint, error, optional, ...input }: Common & InputHTMLAttributes<HTMLInputElement>) {
+export function Field({ id, label, hint: givenHint, error, optional, ...input }: Common & InputHTMLAttributes<HTMLInputElement>) {
+  const hint = shownHint(givenHint, error);
   return (
     <div className="form-group">
       <Label id={id} label={label} optional={optional} />
@@ -56,13 +63,42 @@ export function Field({ id, label, hint, error, optional, ...input }: Common & I
   );
 }
 
-export function SelectField({ id, label, hint, error, optional, children, ...select }: Common & SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
+export function SelectField({ id, label, hint: givenHint, error, optional, children, ...select }: Common & SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
+  const hint = shownHint(givenHint, error);
   return (
     <div className="form-group">
       <Label id={id} label={label} optional={optional} />
       <select id={id} name={id} className="input-field" aria-invalid={error ? true : undefined} aria-describedby={describedBy(id, hint)} {...select}>
         {children}
       </select>
+      {hint ? <p id={`${id}-hint`} className="form-hint">{hint}</p> : null}
+      <ErrorRegion id={`${id}-error`} error={error} />
+    </div>
+  );
+}
+
+/**
+ * Photo picker in DOLAB's style instead of the browser's raw control (Gemini's review of part 1).
+ * The real <input type="file"> stays in the page, visually hidden but focusable, so the keyboard,
+ * screen readers and tests use it as before; its label is drawn as a secondary button.
+ */
+export function FileField({
+  id, label, buttonLabel, summary, hint: givenHint, error, optional, ...input
+}: Common & { buttonLabel: string; summary: string } & InputHTMLAttributes<HTMLInputElement>) {
+  const hint = shownHint(givenHint, error);
+  return (
+    <div className="form-group">
+      <span className="form-label" id={`${id}-label`}>
+        {label}
+        {optional ? <span className="form-optional"> {optional}</span> : null}
+      </span>
+      <div className="file-picker">
+        <input id={id} name={id} type="file" className="file-input visually-hidden"
+          aria-labelledby={`${id}-label ${id}-button`} aria-invalid={error ? true : undefined}
+          aria-describedby={[describedBy(id, hint), `${id}-summary`].join(" ")} {...input} />
+        <label id={`${id}-button`} htmlFor={id} className="btn btn-secondary file-button">{buttonLabel}</label>
+        <span id={`${id}-summary`} className="file-summary" aria-live="polite">{summary}</span>
+      </div>
       {hint ? <p id={`${id}-hint`} className="form-hint">{hint}</p> : null}
       <ErrorRegion id={`${id}-error`} error={error} />
     </div>

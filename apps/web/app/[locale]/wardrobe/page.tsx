@@ -10,7 +10,7 @@ import { useRequireSession } from "../../../components/use-require-session.ts";
 import { ApiError } from "../../../lib/api/errors.ts";
 import { listItems } from "../../../lib/api/items.ts";
 import type { Item, ItemStatus } from "../../../lib/api/types.ts";
-import { fill } from "../../../lib/i18n/messages.ts";
+import { fill, plural } from "../../../lib/i18n/messages.ts";
 
 // The pilot shows the wardrobe's own statuses; for_sale (market) and donated (hidden) come later.
 const FILTERS: Array<ItemStatus | "all"> = ["all", "available", "laundry", "repair", "stored", "lost"];
@@ -68,7 +68,7 @@ export default function WardrobePage() {
         <aside className="wardrobe-aside">
           <h1 className="page-title">{t.wardrobe.title}</h1>
           <p className="muted" aria-live="polite">
-            {summary ? fill(t.wardrobe.summary, summary) : ""}
+            {summary ? fill(t.wardrobe.summary, { items: plural(t.wardrobe.itemCount, summary.total, locale), available: summary.available }) : ""}
           </p>
           <div className="filter-group" role="group" aria-label={t.wardrobe.statusGroup}>
             {FILTERS.map((value) => (
@@ -91,7 +91,14 @@ export default function WardrobePage() {
             </button>
           ) : null}
           {!loading && !error && items.length === 0 ? (
-            <p>{filter === "all" ? t.wardrobe.empty : t.wardrobe.emptyFilter}</p>
+            <div className="card empty-state">
+              <p>{filter === "all" ? t.wardrobe.empty : t.wardrobe.emptyFilter}</p>
+              {filter === "all" ? (
+                <Link className="btn btn-primary" href={`/${locale}/wardrobe/new`}>
+                  {t.wardrobe.addFirst}
+                </Link>
+              ) : null}
+            </div>
           ) : null}
           <ul className="item-grid">
             {items.map((item) => (

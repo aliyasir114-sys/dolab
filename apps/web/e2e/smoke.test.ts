@@ -49,6 +49,8 @@ after(async () => {
 });
 
 async function shot(name: string) {
+  // Pointer out of the way, so no button is caught mid-hover.
+  await page.mouse.move(0, 0);
   await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true });
 }
 
@@ -78,7 +80,9 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await page.fill("#password", PASSWORD);
   await page.click("button[type=submit]");
   await page.waitForURL(/\/ar\/wardrobe$/);
-  await page.getByText(ar.wardrobe.empty).waitFor();
+  const empty = page.locator(".empty-state");
+  await empty.getByText(ar.wardrobe.empty).waitFor();
+  await empty.getByRole("link", { name: ar.wardrobe.addFirst }).waitFor();
   await shot("02-wardrobe-empty-ar");
 
   const cookie = await refreshCookie();
@@ -91,7 +95,7 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   assert.ok(await storageIsEmpty(), "nothing in localStorage, sessionStorage or IndexedDB (P10)");
 
   // Validation: an empty form shows errors and focuses the first field.
-  await page.click(`a[href="/ar/wardrobe/new"]`);
+  await empty.getByRole("link", { name: ar.wardrobe.addFirst }).click();
   await page.waitForURL(/\/ar\/wardrobe\/new$/);
   await page.getByRole("heading", { level: 1, name: ar.item.addTitle }).waitFor();
   await page.click("button[type=submit]");
@@ -99,6 +103,16 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await page.waitForFunction(() => document.activeElement?.id === "name", undefined, { timeout: 2000 });
   assert.equal(await page.getAttribute("#name", "aria-invalid"), "true");
   await shot("03-add-item-errors-ar");
+  // 8px between label and field; the custom photo button; the Arabic currency example.
+  assert.equal(await page.locator(".form-group").first().evaluate((el) => getComputedStyle(el).rowGap), "8px");
+  assert.equal(await page.locator("label.file-button").innerText(), ar.item.choosePhotos);
+  assert.equal(await page.locator("#photos-summary").innerText(), ar.item.noPhotosChosen);
+  assert.equal(await page.getAttribute("#currency", "dir"), null);
+  assert.equal(await page.getAttribute("#currency", "placeholder"), ar.item.currencyPlaceholder);
+  // Editing a field clears its error at once.
+  await page.fill("#name", "x");
+  assert.equal(await page.getAttribute("#name", "aria-invalid"), null);
+  assert.equal(await page.locator("#name-error").innerText(), "");
 
   await page.fill("#name", "قميص أبيض كلاسيكي");
   await page.fill("#category", "قميص");
@@ -106,7 +120,17 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await page.fill("#price", "45,5");
   await page.fill("#currency", "sdg");
   await page.setInputFiles("#photos", { name: "shirt.png", mimeType: "image/png", buffer: PNG });
+  await page.locator("#photos-summary").getByText("صورة واحدة: shirt.png").waitFor();
   await shot("04-add-item-filled-ar");
+  // The save button: black with readable text at rest, and no in-between grey on hover.
+  const save = page.getByRole("button", { name: ar.item.save });
+  const look = () => save.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return [s.backgroundColor, s.color, s.transitionProperty];
+  });
+  const [bg, fg, animated] = await look();
+  assert.deepEqual([bg, fg], ["rgb(8, 8, 8)", "rgb(245, 245, 245)"]);
+  assert.ok(!/(^|, )(all|color|background-color)(,|$)/.test(animated), animated);
   await page.click("button[type=submit]");
   await page.waitForURL(/\/ar\/wardrobe$/);
 
@@ -117,7 +141,7 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await img.waitFor();
   await page.waitForFunction((el) => (el as HTMLImageElement).complete, await img.elementHandle());
   assert.ok((await img.evaluate((el) => (el as HTMLImageElement).naturalWidth)) > 0, "photo loaded from the API");
-  await page.getByText("1 قطعة في الدولاب · 1 متاحة للارتداء").waitFor();
+  await page.getByText("قطعة واحدة في الدولاب · 1 متاحة للارتداء").waitFor();
   await shot("05-wardrobe-one-item-ar");
 
   // A reload keeps the session (refresh cookie), with nothing stored in the page.
@@ -139,6 +163,7 @@ test("English: same session, left-to-right, English text", async () => {
   assert.equal(await page.getAttribute("html", "dir"), "ltr");
   assert.equal(await page.getAttribute("html", "lang"), "en");
   await page.getByRole("heading", { level: 1, name: en.wardrobe.title }).waitFor();
+  await page.getByText("1 item in the wardrobe · 1 ready to wear").waitFor();
   const card = page.locator(".item-card").first();
   await card.waitFor();
   assert.equal(await card.locator(".status-pill").innerText(), en.status.available);
@@ -171,6 +196,10 @@ test("screens for design review (screenshots only)", async () => {
   // Signed in, on /en/wardrobe/new after the previous test.
   await page.getByRole("heading", { level: 1, name: en.item.addTitle }).waitFor();
   await shot("08-add-item-en");
+  // Fields on one row line up: the currency label stays on one line.
+  const tops = await page.locator("#purchaseDate, #price, #currency").evaluateAll((els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().top)));
+  assert.equal(new Set(tops).size, 1, `input tops ${tops}`);
   const screens: Array<[string, string, string]> = [
     ["09-sign-up-ar", "/ar/sign-up", ar.auth.signUpTitle],
     ["10-sign-up-en", "/en/sign-up", en.auth.signUpTitle],
@@ -188,6 +217,10 @@ test("screens for design review (screenshots only)", async () => {
   await page.getByRole("heading", { level: 1, name: ar.auth.signUpTitle }).waitFor();
   await page.click("button[type=submit]");
   await page.locator("#email-error").getByText(ar.auth.badEmail).waitFor();
+  // Both wrong fields carry the error state; the password hint gives way to the error.
+  assert.equal(await page.getAttribute("#password", "aria-invalid"), "true");
+  assert.equal(await page.locator("#password-hint").count(), 0);
+  await page.locator("#password-error").getByText(ar.auth.shortPassword).waitFor();
   await shot("15-sign-up-errors-ar");
 
   // Phone width (390 px)
@@ -202,6 +235,10 @@ test("screens for design review (screenshots only)", async () => {
     await page.getByRole("heading", { level: 1, name: title }).waitFor();
     await shot(name);
   }
+  // On the phone the two form buttons share the width evenly.
+  const widths = await page.locator(".form-actions > .btn").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
+  assert.equal(widths.length, 2);
+  assert.ok(Math.abs(widths[0] - widths[1]) <= 1, String(widths));
   await page.setViewportSize({ width: 1280, height: 900 });
 });
 

@@ -21,6 +21,7 @@ export default function ResetPasswordPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return; // already sending
     const found: typeof errors = {};
     if (code.trim().length < 10) found.code = t.auth.badCode;
     if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) found.password = t.auth.shortPassword;
@@ -50,11 +51,11 @@ export default function ResetPasswordPage() {
         {done ? null : (
           <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
             <Field id="code" label={t.auth.code} autoComplete="one-time-code" dir="ltr" value={code}
-              onChange={(e) => setCode(e.target.value)} error={errors.code} required />
+              onChange={(e) => { setCode(e.target.value); setErrors((x) => ({ ...x, code: undefined })); }} error={errors.code} required />
             <Field id="password" label={t.auth.newPassword} type="password" autoComplete="new-password" hint={t.auth.passwordHint}
               minLength={MIN_PASSWORD} maxLength={MAX_PASSWORD} value={password}
-              onChange={(e) => setPassword(e.target.value)} error={errors.password} required />
-            <button className="btn btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+              onChange={(e) => { setPassword(e.target.value); setErrors((x) => ({ ...x, password: undefined })); }} error={errors.password} required />
+            <button className="btn btn-primary" type="submit" aria-busy={busy}>
               {busy ? t.common.loading : t.auth.resetSubmit}
             </button>
           </form>

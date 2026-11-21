@@ -19,6 +19,7 @@ export default function ForgotPasswordPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return; // already sending
     setFormError("");
     if (!looksLikeEmail(email)) {
       return showErrors(form.current, () => setError(t.auth.badEmail));
@@ -43,8 +44,8 @@ export default function ForgotPasswordPage() {
         <p className="form-status" role="status">{sent ? t.auth.codeSent : ""}</p>
         <form ref={form} className="form-stack" method="post" onSubmit={submit} noValidate>
           <Field id="email" label={t.auth.email} type="email" autoComplete="email" dir="ltr" value={email}
-            onChange={(e) => setEmail(e.target.value)} error={error} required />
-          <button className="btn btn-primary" type="submit" disabled={busy} aria-busy={busy}>
+            onChange={(e) => { setEmail(e.target.value); setError(""); }} error={error} required />
+          <button className="btn btn-primary" type="submit" aria-busy={busy}>
             {busy ? t.common.loading : t.auth.sendCode}
           </button>
         </form>
