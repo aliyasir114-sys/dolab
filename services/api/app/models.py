@@ -6,7 +6,7 @@ from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from . import clock
-from .db import Base
+from .base import Base
 
 ITEM_STATUSES = ("available", "laundry", "repair", "stored", "for_sale", "donated", "lost")
 # Items in these states have left the wardrobe and are never suggested or counted as usable.
@@ -25,7 +25,7 @@ def utcnow() -> datetime:
 
 
 def as_utc(value: datetime) -> datetime:
-    """SQLite returns naive datetimes; treat them as UTC so comparisons work on every database."""
+    """SQLite returns naive datetimes; treat them as UTC. PostgreSQL columns are timestamptz."""
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 

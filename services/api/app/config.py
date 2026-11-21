@@ -27,9 +27,12 @@ def load_settings() -> Settings:
         if environment == "production":
             raise RuntimeError("DOLAB_JWT_SECRET must be set in production")
         secret = _DEV_SECRET
+    database_url = os.getenv("DOLAB_DATABASE_URL", "sqlite:///./dolab.db")
+    if environment == "production" and not database_url.startswith("postgresql"):
+        raise RuntimeError("DOLAB_DATABASE_URL must be PostgreSQL in production")
     return Settings(
         environment=environment,
-        database_url=os.getenv("DOLAB_DATABASE_URL", "sqlite:///./dolab.db"),
+        database_url=database_url,
         jwt_secret=secret,
         token_minutes=int(os.getenv("DOLAB_TOKEN_MINUTES", "15")),
         refresh_days=int(os.getenv("DOLAB_REFRESH_DAYS", "30")),
