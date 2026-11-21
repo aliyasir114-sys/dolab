@@ -167,6 +167,44 @@ test("sign out, protected pages send you to sign in, wrong password is refused",
   await page.waitForURL(/\/en\/wardrobe\/new$/); // back where the visitor was going
 });
 
+test("screens for design review (screenshots only)", async () => {
+  // Signed in, on /en/wardrobe/new after the previous test.
+  await page.getByRole("heading", { level: 1, name: en.item.addTitle }).waitFor();
+  await shot("08-add-item-en");
+  const screens: Array<[string, string, string]> = [
+    ["09-sign-up-ar", "/ar/sign-up", ar.auth.signUpTitle],
+    ["10-sign-up-en", "/en/sign-up", en.auth.signUpTitle],
+    ["11-forgot-password-ar", "/ar/forgot-password", ar.auth.forgotTitle],
+    ["12-forgot-password-en", "/en/forgot-password", en.auth.forgotTitle],
+    ["13-reset-password-ar", "/ar/reset-password", ar.auth.resetTitle],
+    ["14-reset-password-en", "/en/reset-password", en.auth.resetTitle],
+  ];
+  for (const [name, path, title] of screens) {
+    await page.goto(`${WEB}${path}`);
+    await page.getByRole("heading", { level: 1, name: title }).waitFor();
+    await shot(name);
+  }
+  await page.goto(`${WEB}/ar/sign-up`);
+  await page.getByRole("heading", { level: 1, name: ar.auth.signUpTitle }).waitFor();
+  await page.click("button[type=submit]");
+  await page.locator("#email-error").getByText(ar.auth.badEmail).waitFor();
+  await shot("15-sign-up-errors-ar");
+
+  // Phone width (390 px)
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [name, path, title] of [
+    ["16-sign-in-ar-phone", "/ar/sign-in", ar.auth.signInTitle],
+    ["17-add-item-ar-phone", "/ar/wardrobe/new", ar.item.addTitle],
+    ["18-wardrobe-ar-phone", "/ar/wardrobe", ar.wardrobe.title],
+    ["19-add-item-en-phone", "/en/wardrobe/new", en.item.addTitle],
+  ] as Array<[string, string, string]>) {
+    await page.goto(`${WEB}${path}`);
+    await page.getByRole("heading", { level: 1, name: title }).waitFor();
+    await shot(name);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+});
+
 test("the session routes refuse cross-site calls", async () => {
   const response = await page.request.post(`${WEB}/api/session/refresh`, {
     headers: { Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
