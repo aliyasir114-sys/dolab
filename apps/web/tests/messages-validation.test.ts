@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ar, en, fill } from "../lib/i18n/messages.ts";
+import { ar, en, fill, plural } from "../lib/i18n/messages.ts";
 import { checkPhotos, looksLikeEmail, validateItem, type ItemForm } from "../lib/validation/item.ts";
 
 function keys(value: unknown, prefix = ""): string[] {
@@ -25,6 +25,8 @@ test("English text has no Arabic letters, and the same placeholders as Arabic", 
   const arMap = new Map(leaves(ar));
   for (const [key, text] of leaves(en)) {
     if (key !== "nav.otherLanguage" && key !== "nav.otherLanguageName") assert.ok(!arabic.test(text), key);
+    // Plural forms may leave the number out ("قطعة واحدة"), so they are compared as sets below.
+    if (/\.(zero|one|two|few|many|other)$/.test(key)) continue;
     const holes = (s: string) => (s.match(/\{\w+\}/g) ?? []).sort().join();
     assert.equal(holes(text), holes(arMap.get(key) ?? ""), key);
   }
@@ -72,4 +74,17 @@ test("photos: type, size and count", () => {
 test("email check", () => {
   assert.ok(looksLikeEmail(" a@b.co "));
   assert.ok(!looksLikeEmail("a@b"));
+});
+
+test("plural forms: English one/other, Arabic all six", () => {
+  assert.equal(plural(en.wardrobe.itemCount, 1, "en"), "1 item");
+  assert.equal(plural(en.wardrobe.itemCount, 2, "en"), "2 items");
+  assert.equal(plural(en.wardrobe.itemCount, 0, "en"), "0 items");
+  const arCounts = [0, 1, 2, 3, 11, 100].map((n) => plural(ar.wardrobe.itemCount, n, "ar"));
+  assert.deepEqual(arCounts, ["لا قطع", "قطعة واحدة", "قطعتان", "3 قطع", "11 قطعة", "100 قطعة"]);
+  assert.equal(plural(ar.item.photoCount, 2, "ar"), "صورتان");
+});
+
+test("the Arabic currency example keeps the Latin code isolated", () => {
+  assert.ok(ar.item.currencyPlaceholder.includes("\u2068SDG\u2069"));
 });

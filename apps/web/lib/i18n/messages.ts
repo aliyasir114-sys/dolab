@@ -52,11 +52,13 @@ export const ar = {
   },
   wardrobe: {
     title: "دولابي",
-    summary: "{total} قطعة في الدولاب · {available} متاحة للارتداء",
+    summary: "{items} في الدولاب · {available} متاحة للارتداء",
+    itemCount: { zero: "لا قطع", one: "قطعة واحدة", two: "قطعتان", few: "{n} قطع", many: "{n} قطعة", other: "{n} قطعة" },
     statusGroup: "الحالة",
     all: "الكل",
     add: "+ إضافة قطعة",
     empty: "دولابك فارغ. أضف أول قطعة.",
+    addFirst: "+ إضافة أول قطعة",
     emptyFilter: "لا قطع بهذه الحالة.",
     more: "عرض المزيد",
     noPhoto: "لا صورة",
@@ -82,9 +84,14 @@ export const ar = {
     purchaseDate: "تاريخ الشراء",
     price: "سعر الشراء",
     currency: "العملة",
-    currencyPlaceholder: "مثال: SDG",
+    // FSI…PDI isolate the Latin code so the colon stays after «مثال» in right-to-left text.
+    currencyPlaceholder: "مثال: \u2068SDG\u2069",
     photos: "الصور",
     photosHint: "حتى 6 صور، JPEG أو PNG أو WebP، 8 ميغابايت للصورة.",
+    choosePhotos: "اختر صوراً",
+    noPhotosChosen: "لم تُختر صور.",
+    photoCount: { zero: "لا صور", one: "صورة واحدة", two: "صورتان", few: "{n} صور", many: "{n} صورة", other: "{n} صورة" },
+    photosChosen: "{count}: {names}",
     optional: "(اختياري)",
     save: "احفظ القطعة",
     cancel: "إلغاء",
@@ -145,11 +152,13 @@ export const en: Messages = {
   },
   wardrobe: {
     title: "My wardrobe",
-    summary: "{total} items in the wardrobe · {available} ready to wear",
+    summary: "{items} in the wardrobe · {available} ready to wear",
+    itemCount: { zero: "{n} items", one: "{n} item", two: "{n} items", few: "{n} items", many: "{n} items", other: "{n} items" },
     statusGroup: "Status",
     all: "All",
     add: "+ Add item",
     empty: "Your wardrobe is empty. Add your first item.",
+    addFirst: "+ Add your first item",
     emptyFilter: "No items with this status.",
     more: "Show more",
     noPhoto: "No photo",
@@ -178,6 +187,10 @@ export const en: Messages = {
     currencyPlaceholder: "e.g. SDG",
     photos: "Photos",
     photosHint: "Up to 6 photos, JPEG, PNG or WebP, 8 MB each.",
+    choosePhotos: "Choose photos",
+    noPhotosChosen: "No photos chosen.",
+    photoCount: { zero: "{n} photos", one: "{n} photo", two: "{n} photos", few: "{n} photos", many: "{n} photos", other: "{n} photos" },
+    photosChosen: "{count}: {names}",
     optional: "(optional)",
     save: "Save item",
     cancel: "Cancel",
@@ -195,6 +208,14 @@ export const en: Messages = {
 };
 
 export const MESSAGES: Record<AppLocale, Messages> = { ar, en };
+
+export type PluralForms = { zero: string; one: string; two: string; few: string; many: string; other: string };
+
+/** The right plural form for n (Arabic has six, English two), with {n} filled in. */
+export function plural(forms: PluralForms, n: number, locale: AppLocale): string {
+  const category = new Intl.PluralRules(locale).select(n) as keyof PluralForms;
+  return fill(forms[category] ?? forms.other, { n });
+}
 
 /** Fill {name} placeholders. */
 export function fill(text: string, values: Record<string, string | number>): string {
