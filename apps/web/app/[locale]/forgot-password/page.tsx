@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "../../../components/app-context.tsx";
 import { Shell } from "../../../components/shell.tsx";
-import { Field, FormError, focusFirstInvalid, generalError } from "../../../components/ui.tsx";
+import { Field, FormError, generalError, showErrors } from "../../../components/ui.tsx";
 import { forgotPassword } from "../../../lib/api/auth.ts";
 import { looksLikeEmail } from "../../../lib/validation/item.ts";
 
@@ -21,8 +21,7 @@ export default function ForgotPasswordPage() {
     event.preventDefault();
     setFormError("");
     if (!looksLikeEmail(email)) {
-      setError(t.auth.badEmail);
-      return focusFirstInvalid(form.current);
+      return showErrors(form.current, () => setError(t.auth.badEmail));
     }
     setError("");
     setBusy(true);

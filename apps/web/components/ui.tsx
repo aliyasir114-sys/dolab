@@ -1,6 +1,7 @@
 "use client";
 
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import { flushSync } from "react-dom";
 import { ApiError } from "../lib/api/errors.ts";
 import { fill, type Messages } from "../lib/i18n/messages.ts";
 
@@ -92,7 +93,9 @@ export function generalError(t: Messages, error: unknown): string {
   return t.common.unexpected;
 }
 
-/** Move focus to the first field marked invalid, after React has rendered the errors. */
-export function focusFirstInvalid(form: HTMLFormElement | null) {
-  requestAnimationFrame(() => form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+/** Show the form's errors now (flushSync), then move focus to the first invalid field, so a
+ *  keyboard or screen-reader user lands on the problem. */
+export function showErrors(form: HTMLFormElement | null, update: () => void) {
+  flushSync(update);
+  form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
 }

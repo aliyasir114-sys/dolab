@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "../../../components/app-context.tsx";
 import { Shell } from "../../../components/shell.tsx";
-import { Field, FormError, focusFirstInvalid, generalError } from "../../../components/ui.tsx";
+import { Field, FormError, generalError, showErrors } from "../../../components/ui.tsx";
 import { register } from "../../../lib/api/auth.ts";
 import { ApiError } from "../../../lib/api/errors.ts";
 import { MAX_PASSWORD, MIN_PASSWORD, looksLikeEmail } from "../../../lib/validation/item.ts";
@@ -33,9 +33,9 @@ export default function SignUpPage() {
     const found: typeof errors = {};
     if (!looksLikeEmail(email)) found.email = t.auth.badEmail;
     if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD) found.password = t.auth.shortPassword;
-    setErrors(found);
     setFormError("");
-    if (Object.keys(found).length) return focusFirstInvalid(form.current);
+    showErrors(form.current, () => setErrors(found));
+    if (Object.keys(found).length) return;
     setBusy(true);
     try {
       await register(api, { email: email.trim(), password, locale, timezone: browserTimeZone() });
@@ -43,8 +43,7 @@ export default function SignUpPage() {
       router.replace(`/${locale}/wardrobe`);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        setErrors({ email: t.auth.emailTaken });
-        focusFirstInvalid(form.current);
+        showErrors(form.current, () => setErrors({ email: t.auth.emailTaken }));
       } else {
         setFormError(generalError(t, error));
       }

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "../../../components/app-context.tsx";
 import { Shell } from "../../../components/shell.tsx";
-import { Field, FormError, focusFirstInvalid, generalError } from "../../../components/ui.tsx";
+import { Field, FormError, generalError, showErrors } from "../../../components/ui.tsx";
 import { ApiError } from "../../../lib/api/errors.ts";
 import { looksLikeEmail } from "../../../lib/validation/item.ts";
 
@@ -30,9 +30,9 @@ export default function SignInPage() {
     const found: typeof errors = {};
     if (!looksLikeEmail(email)) found.email = t.auth.badEmail;
     if (!password) found.password = t.common.required;
-    setErrors(found);
     setFormError("");
-    if (Object.keys(found).length) return focusFirstInvalid(form.current);
+    showErrors(form.current, () => setErrors(found));
+    if (Object.keys(found).length) return;
     setBusy(true);
     try {
       await session.signIn(email.trim(), password);

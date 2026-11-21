@@ -96,7 +96,7 @@ test("sign up, add an item with a photo, see it in the wardrobe (Arabic)", async
   await page.getByRole("heading", { level: 1, name: ar.item.addTitle }).waitFor();
   await page.click("button[type=submit]");
   await page.locator("#name-error").getByText(ar.common.required).waitFor();
-  assert.equal(await page.evaluate(() => document.activeElement?.id), "name");
+  await page.waitForFunction(() => document.activeElement?.id === "name", undefined, { timeout: 2000 });
   assert.equal(await page.getAttribute("#name", "aria-invalid"), "true");
   await shot("03-add-item-errors-ar");
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { useApp } from "../../../../components/app-context.tsx";
 import { Shell } from "../../../../components/shell.tsx";
-import { Field, FormError, SelectField, focusFirstInvalid, generalError } from "../../../../components/ui.tsx";
+import { Field, FormError, SelectField, generalError, showErrors } from "../../../../components/ui.tsx";
 import { useRequireSession } from "../../../../components/use-require-session.ts";
 import { ApiError } from "../../../../lib/api/errors.ts";
 import { createItem } from "../../../../lib/api/items.ts";
@@ -58,8 +58,8 @@ export default function NewItemPage() {
     const found: typeof errors = {};
     for (const e of itemErrors) found[e.field] ??= fieldMessage(t, e);
     if (photoProblems.length) found.photos = photoProblems.map((p) => photoMessage(t, p)).join(" ");
-    setErrors(found);
-    if (!input || photoProblems.length) return focusFirstInvalid(form.current);
+    showErrors(form.current, () => setErrors(found));
+    if (!input || photoProblems.length) return;
 
     setBusy(true);
     try {
