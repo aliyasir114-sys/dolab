@@ -47,3 +47,11 @@ system's components only and are waiting for Gemini's review. The wardrobe follo
 - **Security headers** in `next.config.ts`: CSP (inline scripts still allowed; a nonce-based policy
   is a follow-up), no framing, `nosniff`, same-origin referrer. No Server Actions, Cache Components
   or image optimisation are used.
+
+## For step H (deployment)
+
+- The session routes pass `X-Forwarded-For` on as received. Put the site behind a proxy that sets
+  it, and set the API's `DOLAB_TRUSTED_PROXY_HOPS` to count that proxy and the web server. If the
+  site were reachable directly, a visitor could forge the header and dodge the per-address sign-in
+  limit (the per-email limit still applies).
+- Set `DOLAB_WEB_ORIGIN` to the public origin, and the API's `DOLAB_CORS_ORIGINS` to the same.
