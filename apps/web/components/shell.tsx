@@ -39,11 +39,18 @@ export function Shell({ children, signedIn = false }: { children: ReactNode; sig
           <span>{t.appName}</span>
         </Link>
         <nav className="app-nav" aria-label={t.nav.main}>
-          {signedIn ? (
-            <Link href={wardrobe} aria-current={pathname === wardrobe ? "page" : undefined}>
-              {t.nav.wardrobe}
-            </Link>
-          ) : null}
+          {signedIn
+            ? ([["wardrobe", t.nav.wardrobe], ["dashboard", t.nav.dashboard], ["profile", t.nav.profile]] as const).map(([page, label]) => {
+                const href = `/${locale}/${page}`;
+                // The item pages belong to the wardrobe: marked as its section, not as the page.
+                const current = pathname === href ? "page" : pathname.startsWith(`${href}/`) ? "true" : undefined;
+                return (
+                  <Link key={page} href={href} aria-current={current}>
+                    {label}
+                  </Link>
+                );
+              })
+            : null}
           {signedIn ? (
             <button type="button" onClick={signOut}>
               {t.nav.signOut}

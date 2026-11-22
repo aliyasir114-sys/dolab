@@ -103,6 +103,7 @@ export default function WardrobePage() {
           <ul className="item-grid">
             {items.map((item) => (
               <li key={item.id}>
+                <Link className="item-link" href={`/${locale}/wardrobe/${encodeURIComponent(item.id)}`}>
                 <article className="card item-card">
                   <div className="item-photo">
                     {item.cover_thumb_url ? (
@@ -120,6 +121,7 @@ export default function WardrobePage() {
                     </span>
                   </div>
                 </article>
+                </Link>
               </li>
             ))}
           </ul>
