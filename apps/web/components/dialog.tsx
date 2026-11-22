@@ -41,10 +41,7 @@ export function ConfirmDialog({
     html.classList.toggle("has-classic-scrollbar", window.innerWidth > html.clientWidth);
     html.classList.add("is-scroll-locked");
     if (page) page.inert = true;
-    const frame = requestAnimationFrame(() => {
-      setShown(true);
-      cancel.current?.focus({ preventScroll: true });
-    });
+    const frame = requestAnimationFrame(() => setShown(true));
 
     function onKey(event: KeyboardEvent) {
       const dialog = box.current;
@@ -88,6 +85,11 @@ export function ConfirmDialog({
       setShown(false);
     };
   }, [open]);
+
+  // Focus moves in once the dialog is visible: an element under visibility:hidden cannot take it.
+  useEffect(() => {
+    if (shown) cancel.current?.focus({ preventScroll: true });
+  }, [shown]);
 
   // The latest handler, without re-running the effect above on every render.
   const onCancelRef = useRef(onCancel);
