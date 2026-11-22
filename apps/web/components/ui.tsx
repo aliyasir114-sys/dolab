@@ -135,3 +135,38 @@ export function showErrors(form: HTMLFormElement | null, update: () => void) {
   flushSync(update);
   form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
 }
+
+/**
+ * One choice among a few short options, drawn as square chips (radio buttons underneath, so arrow
+ * keys, screen readers and forms work as usual). "None" is the first option when the field is
+ * optional.
+ */
+export function ChoiceChips({
+  name, legend, options, value, onChange,
+}: {
+  name: string;
+  legend: string;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset className="chips">
+      <legend className="form-label">{legend}</legend>
+      <div className="chip-row">
+        {options.map((option) => (
+          <label key={option.value} className="chip">
+            <input type="radio" name={name} value={option.value} checked={value === option.value}
+              onChange={() => onChange(option.value)} />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+/** Confirmations ("Saved."): role="status", empty until there is one. */
+export function FormStatus({ message }: { message: string }) {
+  return <p className="form-status" role="status">{message}</p>;
+}

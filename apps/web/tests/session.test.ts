@@ -10,7 +10,7 @@ const SELF = "https://dolab.test";
 
 function request(extra: Partial<SessionRequest> = {}): SessionRequest {
   return { method: "POST", origin: SELF, fetchSite: "same-origin", selfOrigin: SELF, forwardedFor: null,
-    refreshToken: null, json: null, ...extra };
+    refreshToken: null, authorization: null, json: null, ...extra };
 }
 
 // ---- server side
@@ -128,4 +128,41 @@ test("sign-out forgets the token even when the request fails", async () => {
   await session.signIn("a@b.co", "pw");
   await session.signOut();
   assert.equal(session.get(), null);
+});
+
+test("password change: forwards the access token, keeps the new refresh token in the cookie", async () => {
+  const f = fakeFetch([() => json(200, { access_token: "A2", refresh_token: "R2", expires_in: 900 })]);
+  const result = await handleSession("password",
+    request({ authorization: "Bearer A1", json: { current_password: "old-pass", new_password: "new-password" } }), API, f.fn);
+  assert.equal(f.sent[0].url, `${API}/me/password`);
+  assert.equal(f.sent[0].headers.get("Authorization"), "Bearer A1");
+  assert.deepEqual(result.body, { access_token: "A2", expires_in: 900 });
+  assert.equal(result.cookie, "R2");
+});
+
+test("password change needs a bearer token and both fields, and passes refusals through", async () => {
+  const none = await handleSession("password", request({ json: { current_password: "a", new_password: "b" } }), API, fakeFetch([]).fn);
+  assert.equal(none.status, 401);
+  const half = await handleSession("password", request({ authorization: "Bearer A", json: { new_password: "b" } }), API, fakeFetch([]).fn);
+  assert.equal(half.status, 422);
+  const f = fakeFetch([() => json(403, { detail: "current password is wrong" })]);
+  const wrong = await handleSession("password",
+    request({ authorization: "Bearer A", json: { current_password: "x", new_password: "new-password" } }), API, f.fn);
+  assert.equal(wrong.status, 403);
+  assert.equal(wrong.cookie, undefined);
+});
+
+test("browser password change retries once after refreshing an expired access token", async () => {
+  const f = fakeFetch([
+    () => json(200, { access_token: "A1", expires_in: 900 }),          // sign in
+    () => json(401, { detail: "token expired" }),                     // password with A1
+    () => json(200, { access_token: "A2", expires_in: 900 }),          // refresh
+    () => json(200, { access_token: "A3", expires_in: 900 }),          // password with A2
+  ]);
+  const session = createSession({ fetch: f.fn });
+  await session.signIn("a@b.co", "pw");
+  await session.changePassword("pw", "new-password");
+  assert.equal(f.sent[1].headers.get("Authorization"), "Bearer A1");
+  assert.equal(f.sent[3].headers.get("Authorization"), "Bearer A2");
+  assert.equal(session.get(), "A3");
 });
