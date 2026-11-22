@@ -76,3 +76,35 @@ export type AccessToken = {
   access_token: string;
   expires_in: number;
 };
+
+/** Fields a PATCH may change. Status changes follow the server's transition table (lib/status.ts). */
+export type ItemPatch = Partial<Pick<Item, "name" | "category" | "primary_color" | "status" | "purchase_date" | "purchase_price" | "currency">>;
+
+export type StatusChange = {
+  from_status: ItemStatus | null;
+  to_status: ItemStatus;
+  /** created, user, donation, donation_cancelled, listing */
+  reason: string;
+  ref_id: string | null;
+  changed_at: string;
+};
+
+/** Body details; every field optional (PRD 4.4). Saving replaces all of them. */
+export type Profile = {
+  height_cm: number | null;
+  weight_kg: number | null;
+  usual_size: string | null;
+  body_shape: string | null;
+  face_shape: string | null;
+};
+
+export type Dashboard = {
+  total_items: number;
+  /** Items not donated or lost. */
+  active_items: number;
+  by_status: Partial<Record<ItemStatus, number>>;
+  colors: Record<string, number>;
+  /** Active items worn at least once this month (in the user's time zone). */
+  worn_this_month: number;
+  usage_ratio: number | null;
+};
