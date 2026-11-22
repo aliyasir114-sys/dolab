@@ -11,7 +11,7 @@ export async function POST(request: Request, context: { params: Promise<{ action
   const { action } = await context.params;
   const jar = await cookies();
   let json: unknown = null;
-  if (action === "login") {
+  if (action === "login" || action === "password") {
     try {
       json = await request.json();
     } catch {
@@ -27,6 +27,7 @@ export async function POST(request: Request, context: { params: Promise<{ action
       selfOrigin: process.env.DOLAB_WEB_ORIGIN ?? new URL(request.url).origin,
       forwardedFor: null,
       refreshToken: jar.get(REFRESH_COOKIE)?.value ?? null,
+      authorization: request.headers.get("authorization"),
       json,
     },
     API_URL,

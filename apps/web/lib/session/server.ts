@@ -39,10 +39,15 @@ export type SessionRequest = {
   /** Retained for compatibility; browser-supplied forwarding headers are never trusted or passed to the API. */
   forwardedFor: string | null;
   refreshToken: string | null;
+  /** The page's "Authorization: Bearer <access token>", needed by the password action. */
+  authorization: string | null;
   json: unknown;
 };
 
-export const ACTIONS = ["login", "refresh", "logout"] as const;
+/** password: the API's POST /me/password answers with a new token pair (and signs out every other
+ *  session), so it goes through here like sign-in: the new refresh token goes into the cookie and
+ *  never reaches the page. */
+export const ACTIONS = ["login", "refresh", "logout", "password"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 /** Only this site's own pages may call the session routes (CSRF), on top of SameSite=Strict. */
@@ -53,8 +58,9 @@ export function isSameOrigin(req: Pick<SessionRequest, "origin" | "fetchSite" | 
 
 type Fetch = typeof fetch;
 
-async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown) {
+async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown, authorization: string | null = null) {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+  if (authorization) headers.Authorization = authorization;
   return doFetch(apiUrl.replace(/\/+$/, "") + path, {
     method: "POST",
     headers,
@@ -108,6 +114,19 @@ export async function handleSession(action: string, req: SessionRequest, apiUrl:
         { refresh_token: req.refreshToken });
       // A refused refresh ends the session here too: clear the cookie.
       return response.ok ? await tokens(response) : await passError(response, response.status === 401 ? null : undefined);
+    }
+
+    if (action === "password") {
+      const input = (req.json ?? {}) as { current_password?: unknown; new_password?: unknown };
+      if (!req.authorization || !/^Bearer \S+$/.test(req.authorization)) {
+        return { status: 401, body: { detail: "not signed in" } };
+      }
+      if (typeof input.current_password !== "string" || typeof input.new_password !== "string") {
+        return { status: 422, body: { detail: "current_password and new_password are required" } };
+      }
+      const response = await callApi(doFetch, apiUrl, "/me/password",
+        { current_password: input.current_password, new_password: input.new_password }, req.authorization);
+      return response.ok ? await tokens(response) : await passError(response);
     }
 
     // logout: tell the API (best effort), and always clear the cookie.

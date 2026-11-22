@@ -13,6 +13,8 @@ export type Session = TokenSource & {
   /** Restore the session after a page load, using the refresh cookie. */
   restore(): Promise<boolean>;
   isSignedIn(): boolean;
+  /** Change the password; other sessions end and this one gets new tokens (refresh in the cookie). */
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
 };
 
 type Options = { fetch?: typeof fetch; base?: string };
@@ -23,11 +25,13 @@ export function createSession(options: Options = {}): Session {
   let token: string | null = null;
   let refreshing: Promise<string | null> | null = null;
 
-  async function post(action: string, json?: unknown): Promise<Response> {
+  async function post(action: string, json?: unknown, accessToken?: string | null): Promise<Response> {
+    const headers: Record<string, string> = json === undefined ? {} : { "Content-Type": "application/json" };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     try {
       return await doFetch(`${base}/${action}`, {
         method: "POST",
-        headers: json === undefined ? {} : { "Content-Type": "application/json" },
+        headers,
         body: json === undefined ? undefined : JSON.stringify(json),
         credentials: "same-origin",
         cache: "no-store",
@@ -80,5 +84,16 @@ export function createSession(options: Options = {}): Session {
       return (await this.refresh()) !== null;
     },
     isSignedIn: () => token !== null,
+    async changePassword(currentPassword, newPassword) {
+      const body = { current_password: currentPassword, new_password: newPassword };
+      let response = await post("password", body, token);
+      if (response.status === 401) {
+        // The access token may just have expired: refresh once and try again.
+        const fresh = await this.refresh();
+        if (fresh) response = await post("password", body, fresh);
+      }
+      if (!response.ok) await fail(response);
+      token = ((await response.json()) as AccessToken).access_token;
+    },
   };
 }
