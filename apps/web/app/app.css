@@ -72,6 +72,9 @@ select.input-field {
   background-position: right var(--space-m) center;
 }
 [dir="rtl"] select.input-field { background-position: left var(--space-m) center; }
+/* A left-to-right select inside an Arabic page (the time zone): chevron and room on its own end,
+   so the arrow never covers the start of "Africa/Khartoum" (Gemini's review of PR #35). */
+[dir="rtl"] select.input-field[dir="ltr"], select.input-field[dir="ltr"] { background-position: right var(--space-m) center; text-align: left; }
 
 /* Photo picker: the native input is visually hidden; its label is drawn as a button and shows
    the keyboard focus that lands on the input. */
@@ -110,6 +113,8 @@ select.input-field {
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---- Step F part 2 ---- */
+/* A page title followed by its one-line introduction: room for the Arabic descenders. */
+.page-title + .muted { margin-block-start: var(--space-s); }
 .back-link { display: inline-flex; align-items: center; min-height: 44px; margin-block-end: var(--space-m); color: var(--color-primary); font-weight: 600; }
 .section-title { margin: 0; font-size: var(--text-h2); line-height: var(--line-h2); font-weight: 700; }
 .subsection-title { margin: var(--space-m) 0 0; font-size: var(--text-h3); font-weight: 700; }
@@ -166,10 +171,18 @@ select.input-field {
 .chip input:focus-visible + span { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .chip:hover span { border-width: 2px; padding: 0 calc(var(--space-m) - 1px); }
 .privacy-actions { align-items: center; }
+@media (max-width: 600px) {
+  /* Settings and password pairs become one full-width column on the phone; height and weight
+     stay side by side (Gemini's review of PR #35). */
+  .field-pair.stack-on-phone { grid-template-columns: minmax(0, 1fr); }
+  .privacy-actions { flex-direction: column; align-items: stretch; }
+  .privacy-actions > .btn { flex: none; width: 100%; }
+}
 
-/* Dialog: visible at once when it opens (only the opacity fades), so focus can move into it
-   straight away; under the theme's visibility transition the first frame is still hidden. */
-.modal-overlay[aria-hidden="false"] { transition: opacity var(--transition-fast), visibility 0s; }
+/* Dialog: shown at once at full opacity, with no fade or scale, so it never blends with the page
+   behind (Gemini's review of PR #35, same rule as the buttons in PR #33). It also lets focus move
+   into it straight away. */
+.modal-overlay, .modal-overlay[aria-hidden="false"], .modal-content, .modal-overlay[aria-hidden="false"] .modal-content { transition: none; }
 /* Its message and the gap below the body text. */
 .modal-body p { margin: 0; }
 .dialog-error { margin-block-start: var(--space-m); }

@@ -154,7 +154,7 @@ export const ar = {
   },
   dashboard: {
     caption: "إحصائيات دولابك",
-    title: "لوحة الموضة",
+    title: "إحصائيات الدولاب",
     usage: "مؤشر الاستفادة من الدولاب",
     // By the number of active items, so the noun after «من» takes its right form (قطعتين، 3 قطع…).
     usageText: { zero: "لا قطع نشطة بعد.", one: "ارتديت {worn} من قطعة واحدة هذا الشهر", two: "ارتديت {worn} من قطعتين هذا الشهر", few: "ارتديت {worn} من {n} قطع هذا الشهر", many: "ارتديت {worn} من {n} قطعة هذا الشهر", other: "ارتديت {worn} من {n} قطعة هذا الشهر" },

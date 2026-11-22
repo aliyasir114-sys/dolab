@@ -300,7 +300,8 @@ export default function ItemPage() {
         <section className="item-info">
           <div className="item-heading">
             <h1 className="page-title">{item.name}</h1>
-            <p className="muted" dir="ltr">{itemRef(item.id)}</p>
+            {/* The Latin code isolated inside the paragraph, so it sits under the name on the reading side. */}
+            <p className="muted"><span dir="ltr">{itemRef(item.id)}</span></p>
             <span className="status-pill" data-status={item.status}>{t.status[item.status]}</span>
           </div>
 

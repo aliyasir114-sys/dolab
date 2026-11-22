@@ -97,7 +97,11 @@ test("item page: details, wear, status, photos, edit (Arabic)", async () => {
   itemPath = new URL(page.url()).pathname.replace(/^\/ar/, "");
   await page.getByRole("heading", { level: 1, name: "قميص أبيض كلاسيكي" }).waitFor();
   assert.equal(await nav.getByRole("link", { name: ar.nav.wardrobe }).getAttribute("aria-current"), "true");
-  await page.getByText(/^DLB-[0-9A-F]{6}$/).waitFor();
+  const ref = page.getByText(/^DLB-[0-9A-F]{6}$/);
+  await ref.waitFor();
+  // The code sits under the name on the reading side (right in Arabic).
+  const [refBox, titleBox] = [await ref.boundingBox(), await page.locator(".item-heading h1").boundingBox()];
+  assert.ok(refBox && titleBox && Math.abs(refBox.x + refBox.width - (titleBox.x + titleBox.width)) < 40, "ref aligned right");
   const details = page.locator(".details");
   await details.getByText(ar.itemPage.neverWorn).waitFor();
   await details.getByText(/^(7|8) أشهر$/).waitFor();
@@ -147,6 +151,8 @@ test("item page: details, wear, status, photos, edit (Arabic)", async () => {
   const dialog = page.getByRole("dialog", { name: ar.itemPage.deletePhotoTitle });
   await dialog.waitFor();
   await page.waitForFunction(() => document.activeElement?.textContent === "إلغاء");
+  // Shown at once at full opacity, no fade (Gemini's review of PR #35).
+  assert.equal(await page.locator(".modal-overlay").evaluate((el) => [getComputedStyle(el).opacity, getComputedStyle(el).transitionDuration].join()), "1,0s");
   assert.equal(await page.locator(".shell").evaluate((el) => (el as HTMLElement).inert), true);
   assert.ok(await page.evaluate(() => document.documentElement.classList.contains("is-scroll-locked")));
   await page.keyboard.press("Tab");
@@ -223,7 +229,8 @@ test("profile: measurements, settings, password, export, clear (Arabic)", async 
   assert.equal(await page.locator('input[name="size"][value="M"]').isChecked(), true);
   assert.equal(await page.locator('input[name="body"][value="rectangle"]').isChecked(), true);
 
-  // Settings: time zone.
+  // Settings: time zone. In Arabic the Latin list keeps its chevron on the right, clear of the text.
+  assert.match(await page.locator("#timezone").evaluate((el) => getComputedStyle(el).backgroundPosition), /^100%|right/);
   await page.selectOption("#timezone", "Africa/Khartoum");
   await page.getByRole("button", { name: ar.profile.saveSettings }).click();
   await page.locator(".profile-section").nth(1).getByRole("status").getByText(ar.profile.saved).first().waitFor();
@@ -285,6 +292,15 @@ test("English and phone screens for design review", async () => {
   ] as Array<[string, string, string]>) {
     await page.goto(`${WEB}${path}`);
     await page.getByRole("heading", { level: 1, name: title }).waitFor();
+    if (name.startsWith("30") || name.startsWith("33")) {
+      // Settings and password fields stack on the phone; height and weight stay side by side.
+      const top = (sel: string) => page.locator(sel).evaluate((el) => Math.round(el.getBoundingClientRect().top));
+      assert.ok((await top("#timezone")) > (await top("#account-locale")), "settings stacked");
+      assert.ok((await top("#new-password")) > (await top("#current-password")), "passwords stacked");
+      assert.equal(await top("#height"), await top("#weight"));
+      const widths = await page.locator(".privacy-actions > .btn").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
+      assert.equal(new Set(widths).size, 1, `privacy buttons full width: ${widths}`);
+    }
     // Nothing wider than the screen.
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} scrolls sideways`);
     await shot(name);

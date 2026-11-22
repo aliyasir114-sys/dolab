@@ -249,7 +249,7 @@ export default function ProfilePage() {
         <section className="card profile-section" aria-labelledby="settings-title">
           <h2 id="settings-title" className="section-title">{t.profile.settings}</h2>
           <form className="form-stack" method="post" onSubmit={saveSettings}>
-            <div className="field-pair">
+            <div className="field-pair stack-on-phone">
               <SelectField id="account-locale" label={t.profile.language} hint={t.profile.languageHint} value={account.locale}
                 onChange={(e) => setAccount((a) => ({ ...a, locale: e.target.value as Locale }))}>
                 <option value="ar" lang="ar">العربية</option>
@@ -271,7 +271,7 @@ export default function ProfilePage() {
 
           <h3 className="subsection-title">{t.profile.passwordTitle}</h3>
           <form ref={passwordForm} className="form-stack" method="post" onSubmit={changePassword} noValidate>
-            <div className="field-pair">
+            <div className="field-pair stack-on-phone">
               <Field id="current-password" label={t.profile.currentPassword} type="password" autoComplete="current-password"
                 value={passwords.current} error={passwordErrors.current}
                 onChange={(e) => { setPasswords((p) => ({ ...p, current: e.target.value })); setPasswordErrors((x) => ({ ...x, current: undefined })); }} />
