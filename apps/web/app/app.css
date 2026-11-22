@@ -167,7 +167,10 @@ select.input-field {
 .chip:hover span { border-width: 2px; padding: 0 calc(var(--space-m) - 1px); }
 .privacy-actions { align-items: center; }
 
-/* Dialog: its message and the gap below the body text. */
+/* Dialog: visible at once when it opens (only the opacity fades), so focus can move into it
+   straight away; under the theme's visibility transition the first frame is still hidden. */
+.modal-overlay[aria-hidden="false"] { transition: opacity var(--transition-fast), visibility 0s; }
+/* Its message and the gap below the body text. */
 .modal-body p { margin: 0; }
 .dialog-error { margin-block-start: var(--space-m); }
 @media (max-width: 480px) {
