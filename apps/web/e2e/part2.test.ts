@@ -230,7 +230,7 @@ test("profile: measurements, settings, password, export, clear (Arabic)", async 
   assert.equal(await page.locator('input[name="body"][value="rectangle"]').isChecked(), true);
 
   // Settings: time zone. In Arabic the Latin list keeps its chevron on the right, clear of the text.
-  assert.match(await page.locator("#timezone").evaluate((el) => getComputedStyle(el).backgroundPosition), /^100%|right/);
+  assert.match(await page.locator("#timezone").evaluate((el) => getComputedStyle(el).backgroundPosition), /^(calc\(100%|100%|right)/);
   await page.selectOption("#timezone", "Africa/Khartoum");
   await page.getByRole("button", { name: ar.profile.saveSettings }).click();
   await page.locator(".profile-section").nth(1).getByRole("status").getByText(ar.profile.saved).first().waitFor();
