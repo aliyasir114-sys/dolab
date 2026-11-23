@@ -6,5 +6,7 @@ pyjwt>=2.8,<3
 psycopg[binary]>=3.1,<4
 pillow>=10,<13
 python-multipart>=0.0.9,<1
+# S3-compatible photo storage (plan 4.6, step C-2)
+boto3>=1.35,<2
 # Time zone database for zoneinfo on systems that do not ship one
 tzdata>=2024.1
