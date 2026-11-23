@@ -126,7 +126,7 @@ def test_a_failed_file_delete_does_not_fail_the_users_delete(client, signup, mon
 def _load(env: dict[str, str]) -> subprocess.CompletedProcess:
     full = {k: v for k, v in os.environ.items() if not k.startswith(("DOLAB_S3", "DOLAB_STORAGE", "DOLAB_ENV"))}
     full.update(env)
-    code = "from app.config import settings as s; print(s.storage, s.s3_bucket, s.s3_encryption)"
+    code = "from app.config import settings as s; print(s.storage, s.s3_bucket, s.s3_encryption, s.s3_endpoint_url)"
     return subprocess.run([sys.executable, "-c", code], cwd=API_DIR, env=full, capture_output=True, text=True)
 
 
@@ -139,9 +139,32 @@ def test_storage_settings_are_checked():
     assert "cannot be 'none' in production" in no_encryption.stderr
     good = _load({**production, "DOLAB_STORAGE": "s3", "DOLAB_S3_BUCKET": "b"})
     assert good.returncode == 0, good.stderr
-    assert good.stdout.split() == ["s3", "b", "AES256"]  # encrypted unless told otherwise
+    assert good.stdout.split() == ["s3", "b", "AES256", "None"]  # encrypted and AWS default when endpoint is unset
     assert "DOLAB_STORAGE must be" in _load({"DOLAB_STORAGE": "ftp"}).stderr
     assert _load({}).stdout.split()[0] == "local"
+
+
+def test_s3_endpoint_https_is_required_only_in_production():
+    production = {"DOLAB_ENV": "production", "DOLAB_JWT_SECRET": "x" * 40,
+                  "DOLAB_DATABASE_URL": "postgresql+psycopg://u:p@localhost/dolab",
+                  "DOLAB_STORAGE": "s3", "DOLAB_S3_BUCKET": "b"}
+
+    http = _load({**production, "DOLAB_S3_ENDPOINT_URL": "http://s3.example.test"})
+    assert "DOLAB_S3_ENDPOINT_URL must use https:// in production" in http.stderr
+
+    https = _load({**production, "DOLAB_S3_ENDPOINT_URL": "https://s3.example.test"})
+    assert https.returncode == 0, https.stderr
+    assert https.stdout.split()[-1] == "https://s3.example.test"
+
+
+@pytest.mark.parametrize("environment", ["test", "development"])
+def test_http_s3_endpoint_remains_compatible_outside_production(environment):
+    result = _load({"DOLAB_ENV": environment,
+                    "DOLAB_STORAGE": "s3",
+                    "DOLAB_S3_BUCKET": "b",
+                    "DOLAB_S3_ENDPOINT_URL": "http://minio:9000"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-1] == "http://minio:9000"
 
 
 def test_the_configured_backend_is_used():

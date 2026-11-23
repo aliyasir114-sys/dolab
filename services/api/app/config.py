@@ -2,6 +2,7 @@
 import ipaddress
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 _DEV_SECRET = "dev-only-secret-not-for-production-use-0000"
 
@@ -70,10 +71,15 @@ def _storage_settings(environment: str) -> dict:
         raise RuntimeError("DOLAB_S3_ENCRYPTION must be 'AES256', 'aws:kms' or 'none'")
     if environment == "production" and encryption == "none":
         raise RuntimeError("DOLAB_S3_ENCRYPTION cannot be 'none' in production")
+    endpoint_url = os.getenv("DOLAB_S3_ENDPOINT_URL") or None
+    if environment == "production" and endpoint_url:
+        parsed = urlparse(endpoint_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise RuntimeError("DOLAB_S3_ENDPOINT_URL must use https:// in production")
     return {
         "storage": backend,
         "s3_bucket": bucket,
-        "s3_endpoint_url": os.getenv("DOLAB_S3_ENDPOINT_URL") or None,
+        "s3_endpoint_url": endpoint_url,
         "s3_region": os.getenv("DOLAB_S3_REGION", "us-east-1"),
         "s3_encryption": None if encryption == "none" else encryption,
     }

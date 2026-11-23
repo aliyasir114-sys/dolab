@@ -52,6 +52,7 @@ Add a line before you start (in progress) and update it when done.
 | 2026-11-23 | Claude | الخطوة C-1، جانب الموقع: خادم الموقع يمرّر سلسلة `X-Forwarded-For` التي وضعها الوكيل الأمامي مع طلب الدخول فقط، وعند `DOLAB_WEB_BEHIND_PROXY=1` فقط؛ الـ API يثق بخادم الموقع عبر `DOLAB_TRUSTED_PROXIES`. اختبار طرف إلى طرف: خمس محاولات خاطئة تحظر الزائر وحده لا كل زوار الموقع (إخطار #36) | `apps/web/`، `.github/workflows/web.yml` | دُمج (#38، 2026-11-23) |
 | 2026-11-23 | ChatGPT | توثيق أدوار المساهمين في التصميم والمراجعة، مع توضيح أن الإقرار اليدوي لا يغيّر رسم المساهمين المعتمد على commits في GitHub (إخطار #39) | `CONTRIBUTORS.md` | دُمج (#40، 2026-11-23) |
 | 2026-11-23 | Claude | الخطوة C، الجزء 2: واجهة تخزين واحدة بتنفيذين (`LocalStorage` للتطوير و`S3Storage` لأي تخزين متوافق مع S3)، حاوية خاصة وتشفير من جهة الخادم إلزامي في الإنتاج، 503 عند تعطّل التخزين، وظيفة CI تشغّل كل الاختبارات على MinIO، واختبار B1 (إخطار #41) | `services/api/`، `.github/workflows/api.yml` | للمراجعة |
+| 2026-11-23 | GitHub Copilot | إصلاح الخطوة C-2 قبل الدمج: رفض عنوان S3 مخصص عبر HTTP في الإنتاج، والسماح بـ HTTP في التطوير والاختبارات وبقاء نقطة AWS الافتراضية بلا عنوان مخصص (إخطار #41) | `services/api/app/config.py`, `services/api/tests/test_storage.py` | تم |
 
 ## التالي / Next (Claude)
 
