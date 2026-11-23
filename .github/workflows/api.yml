@@ -73,3 +73,42 @@ jobs:
           alembic check
           alembic current
       - run: pytest -q -rs
+
+  # Photo storage on S3-compatible object storage (plan 4.6, step C-2): every test, with the
+  # photos in a private MinIO bucket instead of on disk. MinIO stands in for the provider chosen
+  # in step H; it does not replace the B7 test on the real provider.
+  minio:
+    runs-on: ubuntu-latest
+    env:
+      DOLAB_STORAGE: s3
+      DOLAB_S3_BUCKET: dolab-ci
+      DOLAB_S3_ENDPOINT_URL: http://localhost:9000
+      # This MinIO has no key service, so it cannot encrypt at rest; production refuses "none".
+      DOLAB_S3_ENCRYPTION: none
+      # Throwaway credentials for the CI MinIO only.
+      AWS_ACCESS_KEY_ID: dolab-ci
+      AWS_SECRET_ACCESS_KEY: ci-minio-not-a-secret
+      AWS_DEFAULT_REGION: us-east-1
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/api/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Start MinIO with a private bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live && break; sleep 1; done
+          docker image inspect minio/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
+          python -c "import boto3; boto3.client('s3', endpoint_url='http://localhost:9000').create_bucket(Bucket='dolab-ci')"
+      - run: pytest -q -rs
+      - name: MinIO log
+        if: failure()
+        run: docker logs minio | tail -n 50

@@ -7,7 +7,7 @@ from ..media import VARIANTS, InvalidImage, process_image, signature_is_valid, s
 from ..models import ItemPhoto, new_id
 from ..schemas import PhotoOut
 from ..services import delete_photo_files
-from ..storage import storage
+from ..storage import StorageUnavailable, storage
 from .items import _own_item
 
 router = APIRouter(tags=["photos"])
@@ -26,6 +26,11 @@ def _out(photo: ItemPhoto) -> PhotoOut:
         url=signed_path(photo.id, "original"),
         thumb_url=signed_path(photo.id, "thumb"),
     )
+
+
+def _unavailable() -> HTTPException:
+    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "photo storage is unavailable, try again shortly",
+                         headers={"Retry-After": "30"})
 
 
 @router.post("/items/{item_id}/photos", response_model=PhotoOut, status_code=status.HTTP_201_CREATED)
@@ -53,8 +58,16 @@ def upload_photo(item_id: str, file: UploadFile, user: CurrentUser, db: Db) -> P
     photo_id = new_id()
     original_key = f"{user.id}/{photo_id}_original.{processed.extension}"
     thumb_key = f"{user.id}/{photo_id}_thumb.jpg"
-    storage.save(original_key, processed.original)
-    storage.save(thumb_key, processed.thumb)
+    try:
+        storage.save(original_key, processed.original)
+        storage.save(thumb_key, processed.thumb)
+    except StorageUnavailable as error:
+        # Best effort: do not leave the original behind if only the thumbnail failed.
+        try:
+            storage.delete(original_key)
+        except StorageUnavailable:
+            pass
+        raise _unavailable() from error
     photo = ItemPhoto(
         id=photo_id,
         item_id=item.id,
@@ -111,7 +124,10 @@ def get_media(photo_id: str, variant: str, exp: int, sig: str, db: Db) -> Respon
     key, media_type = (
         (photo.original_key, photo.content_type) if variant == "original" else (photo.thumb_key, "image/jpeg")
     )
-    data = storage.read(key)
+    try:
+        data = storage.read(key)
+    except StorageUnavailable as error:
+        raise _unavailable() from error
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "photo not found")
     return Response(

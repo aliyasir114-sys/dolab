@@ -1,11 +1,15 @@
 """Small rules shared by several routers."""
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .media import signed_path
 from .models import Item, ItemPhoto, ItemStatusChange
 from .schemas import ItemOut
-from .storage import storage
+from .storage import StorageUnavailable, storage
+
+log = logging.getLogger("dolab.storage")
 
 
 def set_status(
@@ -37,10 +41,18 @@ def set_status(
 
 
 def delete_photo_files(photos: list[ItemPhoto]) -> None:
-    """Remove the stored files of the given photos. Call after the database change is committed."""
+    """Remove the stored files of the given photos. Call after the database change is committed.
+
+    The deletion has already happened for the user, and the photo's links stop working with its
+    record, so a storage failure here does not fail the request: it is logged, and the file is
+    left for the orphan clean-up job (step C, a later pull request).
+    """
     for photo in photos:
-        storage.delete(photo.original_key)
-        storage.delete(photo.thumb_key)
+        for key in (photo.original_key, photo.thumb_key):
+            try:
+                storage.delete(key)
+            except StorageUnavailable:
+                log.warning("photo file left in storage after its record was deleted: %s", key)
 
 
 def items_out(db: Session, items: list[Item]) -> list[ItemOut]:

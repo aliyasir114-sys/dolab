@@ -1,11 +1,11 @@
 import io
 import time
-from pathlib import Path
 
 from PIL import Image
 
 from app import media
 from app.config import settings
+from app.storage import storage
 
 SHIRT = {"name": "Classic white shirt", "category": "shirt"}
 HOST = "http://testserver"
@@ -32,10 +32,10 @@ def new_item(client, headers) -> str:
     return client.post("/items", json=SHIRT, headers=headers).json()["id"]
 
 
-def stored_files(client, headers) -> list[Path]:
+def stored_files(client, headers) -> list[str]:
+    """The user's files in whichever storage the tests run on (disk, or MinIO in CI)."""
     user_id = client.get("/me", headers=headers).json()["id"]
-    folder = Path(settings.media_dir) / user_id
-    return sorted(folder.iterdir()) if folder.exists() else []
+    return storage.list_keys(f"{user_id}/")
 
 
 def test_upload_and_view_through_signed_links(client, signup):
@@ -167,8 +167,7 @@ def test_deleting_the_account_removes_photo_files(client, signup):
     upload(client, headers, new_item(client, headers))
     user_id = client.get("/me", headers=headers).json()["id"]
     assert client.delete("/me", headers=headers).status_code == 204
-    folder = Path(settings.media_dir) / user_id
-    assert not folder.exists() or list(folder.iterdir()) == []
+    assert storage.list_keys(f"{user_id}/") == []
 
 
 def test_export_lists_photos(client, signup):

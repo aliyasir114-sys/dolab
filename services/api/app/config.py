@@ -15,6 +15,13 @@ class Settings:
     refresh_days: int
     reset_minutes: int
     media_dir: str
+    # Photo storage: "local" (DOLAB_MEDIA_DIR; development) or "s3" (plan 4.6).
+    storage: str
+    s3_bucket: str
+    s3_endpoint_url: str | None
+    s3_region: str
+    # Server-side encryption asked of the provider: "AES256", "aws:kms", or None (CI's MinIO only).
+    s3_encryption: str | None
     max_upload_bytes: int
     media_url_seconds: int
     cors_origins: tuple[str, ...]
@@ -40,11 +47,36 @@ def load_settings() -> Settings:
         refresh_days=int(os.getenv("DOLAB_REFRESH_DAYS", "30")),
         reset_minutes=int(os.getenv("DOLAB_RESET_MINUTES", "30")),
         media_dir=os.getenv("DOLAB_MEDIA_DIR", "./media"),
+        **_storage_settings(environment),
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
         cors_origins=_cors_origins(os.getenv("DOLAB_CORS_ORIGINS", "")),
         trusted_proxies=_trusted_proxies(os.getenv("DOLAB_TRUSTED_PROXIES", "")),
     )
+
+
+def _storage_settings(environment: str) -> dict:
+    backend = os.getenv("DOLAB_STORAGE", "local")
+    if backend not in ("local", "s3"):
+        raise RuntimeError("DOLAB_STORAGE must be 'local' or 's3'")
+    if environment == "production" and backend != "s3":
+        # Several server instances do not share a disk, and a container's disk does not last.
+        raise RuntimeError("DOLAB_STORAGE must be 's3' in production")
+    bucket = os.getenv("DOLAB_S3_BUCKET", "")
+    if backend == "s3" and not bucket:
+        raise RuntimeError("DOLAB_S3_BUCKET must be set when DOLAB_STORAGE is 's3'")
+    encryption = os.getenv("DOLAB_S3_ENCRYPTION", "AES256")
+    if encryption not in ("AES256", "aws:kms", "none"):
+        raise RuntimeError("DOLAB_S3_ENCRYPTION must be 'AES256', 'aws:kms' or 'none'")
+    if environment == "production" and encryption == "none":
+        raise RuntimeError("DOLAB_S3_ENCRYPTION cannot be 'none' in production")
+    return {
+        "storage": backend,
+        "s3_bucket": bucket,
+        "s3_endpoint_url": os.getenv("DOLAB_S3_ENDPOINT_URL") or None,
+        "s3_region": os.getenv("DOLAB_S3_REGION", "us-east-1"),
+        "s3_encryption": None if encryption == "none" else encryption,
+    }
 
 
 def _trusted_proxies(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
