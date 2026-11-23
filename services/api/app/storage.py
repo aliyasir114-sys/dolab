@@ -12,6 +12,8 @@ through the API, which checks the file and strips its metadata first.
 """
 import logging
 import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -33,11 +35,18 @@ def check_key(key: str) -> str:
     return key
 
 
+@dataclass(frozen=True)
+class StoredObject:
+    key: str
+    modified: datetime  # timezone-aware, UTC
+
+
 class Storage(Protocol):
     def save(self, key: str, data: bytes) -> None: ...
     def read(self, key: str) -> bytes | None: ...
     def delete(self, key: str) -> None: ...
     def list_keys(self, prefix: str) -> list[str]: ...
+    def list_objects(self, prefix: str) -> list[StoredObject]: ...
 
 
 class LocalStorage:
@@ -63,12 +72,20 @@ class LocalStorage:
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
 
-    def list_keys(self, prefix: str) -> list[str]:
-        """Every key that starts with prefix, sorted."""
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        """Every file whose key starts with prefix, sorted by key, with its modification time."""
         if not self.root.exists():
             return []
-        keys = (p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
-        return sorted(k for k in keys if k.startswith(prefix))
+        found = []
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                key = path.relative_to(self.root).as_posix()
+                if key.startswith(prefix):
+                    found.append(StoredObject(key, datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)))
+        return sorted(found, key=lambda o: o.key)
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return [o.key for o in self.list_objects(prefix)]
 
 
 class S3Storage:
@@ -129,18 +146,29 @@ class S3Storage:
     def delete(self, key: str) -> None:
         self._call("delete_object", Key=check_key(key))
 
-    def list_keys(self, prefix: str) -> list[str]:
-        keys: list[str] = []
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        """Every object whose key starts with prefix, page by page. A failure part-way raises
+        StorageUnavailable: never a partial list."""
+        found: list[StoredObject] = []
         token = None
         while True:
             page = self._call("list_objects_v2", Prefix=prefix, **({"ContinuationToken": token} if token else {}))
             if page is None:
-                break
-            keys.extend(entry["Key"] for entry in page.get("Contents", []))
+                raise StorageUnavailable("storage listing failed: bucket not found")
+            for entry in page.get("Contents", []):
+                modified = entry["LastModified"]
+                if modified.tzinfo is None:
+                    modified = modified.replace(tzinfo=timezone.utc)
+                found.append(StoredObject(entry["Key"], modified))
             if not page.get("IsTruncated"):
                 break
             token = page.get("NextContinuationToken")
-        return sorted(keys)
+            if not token:
+                raise StorageUnavailable("storage listing failed: truncated page without a continuation token")
+        return sorted(found, key=lambda o: o.key)
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return [o.key for o in self.list_objects(prefix)]
 
 
 def build_storage(config: Settings) -> Storage:
