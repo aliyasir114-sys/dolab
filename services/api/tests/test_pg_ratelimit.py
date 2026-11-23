@@ -28,7 +28,10 @@ def test_parallel_guesses_cannot_pass_the_limit_together(client):
     results = parallel(12, lambda _i: rl.LoginLimiter().start(EMAIL, "198.51.100.1").wait)
     allowed = [wait for wait in results if wait is None]
     assert 1 <= len(allowed) <= 5, results
-    # And afterwards the address is blocked.
+    # Under contention some may be refused early (and forgotten); never more than five pass in
+    # total: the rest of the five are still available one by one, and then no more.
+    for _ in range(5 - len(allowed)):
+        assert rl.login_limiter.start(EMAIL, "198.51.100.1").wait is None
     assert rl.login_limiter.start(EMAIL, "198.51.100.1").wait is not None
 
 
