@@ -12,6 +12,7 @@ if not os.getenv("DOLAB_DATABASE_URL", "").startswith("postgresql"):
 os.environ["DOLAB_ENV"] = "test"
 os.environ["DOLAB_CORS_ORIGINS"] = "https://web.dolab.test"
 os.environ["DOLAB_MEDIA_DIR"] = tempfile.mkdtemp(prefix="dolab-media-")
+os.environ["DOLAB_EXPORT_TMP_DIR"] = tempfile.mkdtemp(prefix="dolab-exports-")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

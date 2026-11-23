@@ -1,6 +1,7 @@
 """Runtime settings, read from environment variables. No secrets live in the code."""
 import ipaddress
 import os
+import tempfile
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -16,6 +17,8 @@ class Settings:
     refresh_days: int
     reset_minutes: int
     media_dir: str
+    # Where ZIP exports are built before they are sent (plan 4.3). Never uploaded anywhere.
+    export_tmp_dir: str
     # Photo storage: "local" (DOLAB_MEDIA_DIR; development) or "s3" (plan 4.6).
     storage: str
     s3_bucket: str
@@ -48,6 +51,7 @@ def load_settings() -> Settings:
         refresh_days=int(os.getenv("DOLAB_REFRESH_DAYS", "30")),
         reset_minutes=int(os.getenv("DOLAB_RESET_MINUTES", "30")),
         media_dir=os.getenv("DOLAB_MEDIA_DIR", "./media"),
+        export_tmp_dir=os.getenv("DOLAB_EXPORT_TMP_DIR", os.path.join(tempfile.gettempdir(), "dolab-exports")),
         **_storage_settings(environment),
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
