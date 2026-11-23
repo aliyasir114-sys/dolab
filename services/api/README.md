@@ -98,10 +98,12 @@ Google and phone sign-in, a real email provider (reset codes are only logged in 
 ## Security notes
 
 - Passwords are hashed with scrypt. Access tokens are signed JWTs that last 15 minutes; refresh tokens are random, stored only as hashes, last 30 days, work once each, and a reused one ends that whole sign-in (theft detection).
-- Password reset codes are random, single-use, expire after 30 minutes, and the request answers the same whether or not the email is registered (at most 3 emails an hour per address). Resetting or changing the password signs the user out everywhere else. `DOLAB_JWT_SECRET` must be set in production (the app refuses to start without it).
+- Password reset codes are random, single-use, expire after 30 minutes, and the request answers the same whether or not the email is registered (at most 3 emails an hour per email). Resetting or changing the password signs the user out everywhere else. `DOLAB_JWT_SECRET` must be set in production (the app refuses to start without it).
 - Every item, donation and profile query is scoped to the signed-in user. Another user's item id answers 404.
 - Body measurements live in a separate `profiles` table and are returned only to their owner.
-- Sign-in limits: 5 wrong passwords for one email from one address block that address for 15 minutes; 20 from any addresses block the email for an hour, so knowing an email is not enough to lock its owner out. Set `DOLAB_TRUSTED_PROXY_HOPS` to the number of proxies in front of the API so the real client address is used.
+- Sign-in limits (plan 4.7): 5 wrong passwords for one email from one address block that address for 15 minutes. From 20 failures on an email in an hour (from any addresses), each further attempt waits longer: 30 seconds after the last one, then 1, 2, 4, 8 minutes, at most 15. That is a delay, not a lock, so knowing an email is not enough to lock its owner out.
+- The limits are kept in PostgreSQL (`rate_limit_events`), so they hold across server instances and restarts. Each attempt is recorded before it is counted, so parallel guesses cannot pass together. Only keyed hashes are stored, never the email or the address; rows are purged after two hours. Every instance must share the same `DOLAB_JWT_SECRET`, from which the hash key is derived.
+- Client address: `DOLAB_TRUSTED_PROXIES` lists the proxies (addresses or CIDR ranges, comma-separated) in front of the API, such as the load balancer and the web server. `X-Forwarded-For` is read only on a connection from one of them, from the right, stepping past trusted proxies only, so an address a browser writes in the header is never used. With the list empty the header is ignored. (The old `DOLAB_TRUSTED_PROXY_HOPS` is refused.)
 - CORS is off unless `DOLAB_CORS_ORIGINS` lists exact origins; wildcards are refused.
-- These limits are in-memory and protects one process only; it must move to a shared store before running several workers.
+- A general per-address limit on every route belongs in the reverse proxy (deployment, step H).
 - No real secrets or user data belong in this repository.

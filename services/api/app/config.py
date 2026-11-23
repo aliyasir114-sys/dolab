@@ -1,4 +1,5 @@
 """Runtime settings, read from environment variables. No secrets live in the code."""
+import ipaddress
 import os
 from dataclasses import dataclass
 
@@ -17,7 +18,8 @@ class Settings:
     max_upload_bytes: int
     media_url_seconds: int
     cors_origins: tuple[str, ...]
-    trusted_proxy_hops: int
+    # Proxies whose X-Forwarded-For is believed (the load balancer, the web server). Empty: none.
+    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
 
 
 def load_settings() -> Settings:
@@ -41,8 +43,25 @@ def load_settings() -> Settings:
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
         cors_origins=_cors_origins(os.getenv("DOLAB_CORS_ORIGINS", "")),
-        trusted_proxy_hops=int(os.getenv("DOLAB_TRUSTED_PROXY_HOPS", "0")),
+        trusted_proxies=_trusted_proxies(os.getenv("DOLAB_TRUSTED_PROXIES", "")),
     )
+
+
+def _trusted_proxies(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Addresses or CIDR ranges, comma-separated: "10.0.0.0/8, 192.0.2.7"."""
+    if os.getenv("DOLAB_TRUSTED_PROXY_HOPS"):
+        # Replaced: a hop count trusted the header whoever sent it. Refuse rather than ignore it.
+        raise RuntimeError("DOLAB_TRUSTED_PROXY_HOPS is no longer used; list the proxies in DOLAB_TRUSTED_PROXIES")
+    networks = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(part, strict=True))
+        except ValueError as error:
+            raise RuntimeError(f"DOLAB_TRUSTED_PROXIES: not an address or range: {part!r}") from error
+    return tuple(networks)
 
 
 def _cors_origins(raw: str) -> tuple[str, ...]:

@@ -37,7 +37,7 @@ SCHEMA_ACL = {
     DELETER: {"USAGE"},
 }
 
-# Table privileges, from migration 0002_app_privileges. Tables not listed here fail the
+# Table privileges, from migrations 0002_app_privileges and 0003_rate_limit_events. Tables not listed here fail the
 # inventory test until someone decides who may use them.
 _FULL = {"SELECT", "INSERT", "UPDATE", "DELETE"}
 _APPEND = {"SELECT", "INSERT", "DELETE"}
@@ -52,6 +52,8 @@ TABLES = {
     "wear_logs": {APP: _APPEND},
     "donations": {APP: _APPEND},
     "donation_items": {APP: _APPEND},
+    # Migration 0003: counted, recorded, cleared and purged; never edited.
+    "rate_limit_events": {APP: _APPEND},
     # Migration bookkeeping: owner only.
     "alembic_version": {},
 }

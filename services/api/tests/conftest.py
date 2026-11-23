@@ -34,7 +34,8 @@ def client():
     login_limiter.reset()
     reset_limiter.reset()
     mailer.sent.clear()
-    with TestClient(app, base_url="http://testserver/v1") as test_client:
+    # A real address for the connection, so trusted-proxy rules can be tested.
+    with TestClient(app, base_url="http://testserver/v1", client=("127.0.0.1", 50000)) as test_client:
         yield test_client
 
 
