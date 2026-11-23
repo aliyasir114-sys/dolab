@@ -60,17 +60,29 @@ class LocalStorage:
             raise ValueError("invalid storage key")
         return path
 
+    # Disk errors (permissions, a full or failing disk) are StorageUnavailable, as on S3, so every
+    # caller handles one kind of storage failure.
+
     def save(self, key: str, data: bytes) -> None:
         path = self._path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        except OSError as error:
+            raise StorageUnavailable(f"storage save failed: {type(error).__name__}") from error
 
     def read(self, key: str) -> bytes | None:
         path = self._path(key)
-        return path.read_bytes() if path.is_file() else None
+        try:
+            return path.read_bytes() if path.is_file() else None
+        except OSError as error:
+            raise StorageUnavailable(f"storage read failed: {type(error).__name__}") from error
 
     def delete(self, key: str) -> None:
-        self._path(key).unlink(missing_ok=True)
+        try:
+            self._path(key).unlink(missing_ok=True)
+        except OSError as error:
+            raise StorageUnavailable(f"storage delete failed: {type(error).__name__}") from error
 
     def list_objects(self, prefix: str) -> list[StoredObject]:
         """Every file whose key starts with prefix, sorted by key, with its modification time."""

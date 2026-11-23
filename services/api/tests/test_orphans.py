@@ -152,6 +152,47 @@ def test_a_failed_delete_is_reported_does_not_stop_the_rest_and_is_retried(clien
     assert scratch.list_keys("") == []
 
 
+def test_a_disk_error_mid_batch_is_reported_and_the_rest_still_go(client, scratch, monkeypatch):
+    # The real LocalStorage, with the disk refusing to remove one file (review of PR #44).
+    import pathlib
+
+    keys = sorted(photo_key() for _ in range(3))
+    for key in keys:
+        scratch.save(key, b"x")
+    stuck = keys[1]
+    real_unlink = pathlib.Path.unlink
+
+    def refusing_unlink(self, *args, **kwargs):
+        if self.as_posix().endswith(stuck):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", refusing_unlink)
+    report = orphans.sweep(scratch, now=later())
+    assert report.failed == [stuck]
+    assert sorted(report.deleted) == [keys[0], keys[2]]  # the file after the failure was handled
+    assert scratch.list_keys("") == [stuck]
+
+    monkeypatch.setattr(pathlib.Path, "unlink", real_unlink)  # the disk recovers
+    assert orphans.sweep(scratch, now=later()).deleted == [stuck]
+    assert scratch.list_keys("") == []
+
+
+def test_a_raw_os_error_from_a_storage_cannot_stop_the_batch(client, scratch):
+    keys = sorted(photo_key() for _ in range(3))
+    for key in keys:
+        scratch.save(key, b"x")
+
+    class Raw(LocalStorage):
+        def delete(self, key):
+            if key == keys[0]:
+                raise OSError(5, "Input/output error")
+            super().delete(key)
+
+    report = orphans.sweep(Raw(str(scratch.root)), now=later())
+    assert report.failed == [keys[0]] and sorted(report.deleted) == keys[1:]
+
+
 class Spy(LocalStorage):
     """Fails the listing, and records any delete (there must be none)."""
 

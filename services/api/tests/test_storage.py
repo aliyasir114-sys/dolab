@@ -42,6 +42,25 @@ def test_local_storage_round_trip(tmp_path):
     assert LocalStorage(str(tmp_path / "missing")).list_keys("") == []
 
 
+def test_local_disk_errors_are_storage_unavailable(tmp_path, monkeypatch):
+    import pathlib
+
+    local = LocalStorage(str(tmp_path))
+    local.save("u/a_thumb.jpg", b"x")
+
+    def broken(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    for name in ("unlink", "read_bytes", "write_bytes"):
+        with monkeypatch.context() as patch:
+            patch.setattr(pathlib.Path, name, broken)
+            with pytest.raises(StorageUnavailable):
+                {"unlink": lambda: local.delete("u/a_thumb.jpg"),
+                 "read_bytes": lambda: local.read("u/a_thumb.jpg"),
+                 "write_bytes": lambda: local.save("u/b_thumb.jpg", b"y")}[name]()
+    assert local.read("u/a_thumb.jpg") == b"x"
+
+
 def test_s3_asks_for_server_side_encryption_and_maps_errors():
     import boto3
 
