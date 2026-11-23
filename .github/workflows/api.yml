@@ -102,11 +102,15 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Start MinIO with a private bucket
         run: |
+          # MinIO no longer publishes images (Docker Hub and quay.io refuse anonymous pulls since
+          # 2026), so CI uses Chainguard's free build of MinIO. It runs as a non-root user: data
+          # goes in /tmp inside the container.
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
-            minio/minio:latest server /data
+            cgr.dev/chainguard/minio:latest server /tmp/minio-data
           for i in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live && break; sleep 1; done
-          docker image inspect minio/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
+          curl -fsS http://localhost:9000/minio/health/live
+          docker image inspect cgr.dev/chainguard/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
           python -c "import boto3; boto3.client('s3', endpoint_url='http://localhost:9000').create_bucket(Bucket='dolab-ci')"
       - run: pytest -q -rs
       - name: MinIO log
