@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createSession } from "../lib/session/browser.ts";
-import { handleSession, isSameOrigin, refreshCookieOptions, type SessionRequest } from "../lib/session/server.ts";
+import { forwardedChain, handleSession, isSameOrigin, refreshCookieOptions, type SessionRequest } from "../lib/session/server.ts";
 import { ApiError } from "../lib/api/errors.ts";
 import { fakeFetch, json } from "./fake-fetch.ts";
 
@@ -25,10 +25,32 @@ test("login returns the access token only; the refresh token goes to the cookie"
   assert.equal(f.sent[0].url, `${API}/auth/login`);
 });
 
-test("a caller-supplied forwarded address is never passed to the API", async () => {
+test("without a proxy in front of the site, the browser's forwarded header is never passed on", () => {
+  assert.equal(forwardedChain("198.51.100.7", false), null);
+  assert.equal(forwardedChain(null, true), null);
+  assert.equal(forwardedChain(" , ", true), null);
+});
+
+test("behind a proxy, the chain is passed on in place: last 8 entries, odd ones replaced", () => {
+  // The browser wrote "1.1.1.1"; the proxy appended the visitor's real address.
+  assert.equal(forwardedChain("1.1.1.1, 198.51.100.7", true), "1.1.1.1, 198.51.100.7");
+  assert.equal(forwardedChain("<script>, 198.51.100.7", true), "unknown, 198.51.100.7");
+  assert.equal(forwardedChain("[2001:db8::1]:443,198.51.100.7:5000", true), "[2001:db8::1]:443, 198.51.100.7:5000");
+  const long = Array.from({ length: 20 }, (_, i) => `10.0.0.${i}`).join(", ");
+  assert.equal(forwardedChain(long, true)?.split(", ").length, 8);
+  assert.ok(forwardedChain(long, true)?.endsWith("10.0.0.19"));
+});
+
+test("only sign-in sends the forwarded chain to the API", async () => {
   const f = fakeFetch([() => json(401, { detail: "wrong email or password" })]);
   await handleSession("login", request({ forwardedFor: "198.51.100.7", json: { email: "a@b.co", password: "x" } }), API, f.fn);
-  assert.equal(f.sent[0].headers.get("X-Forwarded-For"), null);
+  assert.equal(f.sent[0].headers.get("X-Forwarded-For"), "198.51.100.7");
+  const g = fakeFetch([() => json(401, { detail: "wrong email or password" })]);
+  await handleSession("login", request({ json: { email: "a@b.co", password: "x" } }), API, g.fn);
+  assert.equal(g.sent[0].headers.get("X-Forwarded-For"), null);
+  const h = fakeFetch([() => json(200, { access_token: "A", refresh_token: "R", expires_in: 900 })]);
+  await handleSession("refresh", request({ forwardedFor: "198.51.100.7", refreshToken: "R0" }), API, h.fn);
+  assert.equal(h.sent[0].headers.get("X-Forwarded-For"), null);
 });
 
 test("API errors pass through with Retry-After, and leave the cookie alone", async () => {

@@ -55,6 +55,8 @@ jobs:
           DOLAB_CORS_ORIGINS: http://localhost:3000
           DOLAB_DATABASE_URL: sqlite:///./e2e.db
           DOLAB_MEDIA_DIR: ./e2e-media
+          # The site's server is the only trusted proxy (step C-1; e2e/address.test.ts).
+          DOLAB_TRUSTED_PROXIES: 127.0.0.1/32,::1/128
         run: |
           pip install -r requirements.txt
           nohup uvicorn app.main:app --port 8000 > /tmp/api.log 2>&1 &
@@ -63,6 +65,9 @@ jobs:
           node-version: "22"
       - name: Build and start the site
         working-directory: apps/web
+        env:
+          # CI stands in for the reverse proxy that appends the visitor's address.
+          DOLAB_WEB_BEHIND_PROXY: "1"
         run: |
           npm ci --no-audit --no-fund
           npm run build

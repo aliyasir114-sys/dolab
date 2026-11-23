@@ -37,8 +37,7 @@ system's components only and are waiting for Gemini's review. The wardrobe follo
   to `localStorage`, `sessionStorage`, IndexedDB or a readable cookie (P10). The session routes run
   on the Node.js runtime and set the cookie with `cookies().set()` (Next.js advisory
   GHSA-f3mh-rxg3-f5g2), accept same-origin requests only, and do not pass browser-supplied
-  `X-Forwarded-For` values to the API. Per-address API limits currently rely on the API's direct
-  connection view until an audited trusted-proxy contract is established.
+  `X-Forwarded-For` values to the API unless `DOLAB_WEB_BEHIND_PROXY=1` (see step H below).
 - **Step C contracts are swappable.** Photos go through the `PhotoStore` interface
   (`lib/api/photos.ts`). Export and account deletion will use the same pattern when their screens
   come.
@@ -50,6 +49,15 @@ system's components only and are waiting for Gemini's review. The wardrobe follo
 
 ## For step H (deployment)
 
-- The session routes do not forward caller-supplied `X-Forwarded-For`; deployment may add a trusted
-  proxy contract separately, but until then the API's per-address limit uses the web server connection.
+- **Visitor address for the API's sign-in limit (step C-1, reviewer's pre-H task (a)).** Without
+  it, every visitor reaches the API from this server's address, so 5 wrong passwords for an email
+  through the site would block that email for everyone using the site. To pass the real address:
+  1. Run the site behind a reverse proxy that **appends** the address it received from to
+     `X-Forwarded-For` (nginx `$proxy_add_x_forwarded_for`, most load balancers do by default),
+     and set `DOLAB_WEB_BEHIND_PROXY=1` here. Sign-in then passes that chain (last 8 entries) on.
+  2. On the API, list this server's address (and any proxy between it and the API) in
+     `DOLAB_TRUSTED_PROXIES`. The API reads the chain from the right, past trusted proxies only, so
+     whatever the browser wrote on the left is never used.
+  Never set `DOLAB_WEB_BEHIND_PROXY=1` without such a proxy: the header would then be the
+  browser's own words.
 - Set `DOLAB_WEB_ORIGIN` to the public origin, and the API's `DOLAB_CORS_ORIGINS` to the same.

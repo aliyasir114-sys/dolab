@@ -36,7 +36,8 @@ export type SessionRequest = {
   fetchSite: string | null;
   /** The web app's own origin, e.g. https://dolab.example */
   selfOrigin: string;
-  /** Retained for compatibility; browser-supplied forwarding headers are never trusted or passed to the API. */
+  /** X-Forwarded-For to pass to the API with a sign-in, from forwardedChain(): the addresses
+   *  written by the trusted proxy in front of this site. null when this site has no such proxy. */
   forwardedFor: string | null;
   refreshToken: string | null;
   /** The page's "Authorization: Bearer <access token>", needed by the password action. */
@@ -56,11 +57,38 @@ export function isSameOrigin(req: Pick<SessionRequest, "origin" | "fetchSite" | 
   return req.origin !== null && req.origin === req.selfOrigin;
 }
 
+/** At most this many addresses are passed on: the API reads from the right, so the left is noise. */
+const MAX_FORWARDED = 8;
+const ADDRESS_LIKE = /^[0-9A-Za-z.:[\]_-]{1,64}$/;
+
+/**
+ * The X-Forwarded-For chain to pass to the API with a sign-in, so its per-address limit sees the
+ * visitor and not this server (plan 4.7; reviewer's pre-H task (a)).
+ *
+ * Only when this site runs behind a reverse proxy that appends the address it received from
+ * (DOLAB_WEB_BEHIND_PROXY=1): then the rightmost entry is the proxy's, whatever the browser wrote
+ * further left. The API believes the header only from addresses in its DOLAB_TRUSTED_PROXIES,
+ * which must list this server (and any load balancer), and reads it from the right, so the
+ * browser's part is never reached. Without such a proxy the header would be the browser's own
+ * words, so nothing is passed (the default).
+ *
+ * Entries are kept in place (only the last 8); anything that does not look like an address is
+ * replaced by "unknown", so the positions the API counts from the right do not move.
+ */
+export function forwardedChain(header: string | null, behindProxy: boolean): string | null {
+  if (!behindProxy || !header) return null;
+  const entries = header.split(",").map((part) => part.trim()).filter(Boolean).slice(-MAX_FORWARDED);
+  if (!entries.length) return null;
+  return entries.map((entry) => (ADDRESS_LIKE.test(entry) ? entry : "unknown")).join(", ");
+}
+
 type Fetch = typeof fetch;
 
-async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown, authorization: string | null = null) {
+async function callApi(doFetch: Fetch, apiUrl: string, path: string, json: unknown, authorization: string | null = null,
+  forwardedFor: string | null = null) {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
   if (authorization) headers.Authorization = authorization;
+  if (forwardedFor) headers["X-Forwarded-For"] = forwardedFor;
   return doFetch(apiUrl.replace(/\/+$/, "") + path, {
     method: "POST",
     headers,
@@ -104,7 +132,7 @@ export async function handleSession(action: string, req: SessionRequest, apiUrl:
         return { status: 422, body: { detail: "email and password are required" } };
       }
       const response = await callApi(doFetch, apiUrl, "/auth/login",
-        { email: input.email, password: input.password });
+        { email: input.email, password: input.password }, null, req.forwardedFor);
       return response.ok ? await tokens(response) : await passError(response);
     }
 
