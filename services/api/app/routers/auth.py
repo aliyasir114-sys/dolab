@@ -88,22 +88,21 @@ def register(body: RegisterIn, db: Db) -> User:
 
 @router.post("/auth/login", response_model=TokenOut)
 def login(body: LoginIn, db: Db, request: Request) -> TokenOut:
-    ip = client_ip(request)
-    wait = login_limiter.blocked(body.email, ip)
-    if wait is not None:
+    attempt = login_limiter.start(body.email, client_ip(request))
+    if attempt.wait is not None:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "too many failed attempts, try again later",
-            headers={"Retry-After": str(wait)},
+            headers={"Retry-After": str(attempt.wait)},
         )
     user = db.scalar(select(User).where(User.email == body.email))
     # Same answer for an unknown email and a wrong password, so accounts cannot be probed.
     if user is None or not verify_password(body.password, user.password_hash):
-        login_limiter.record_failure(body.email, ip)
+        # The attempt is already recorded: it stays as a failure.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong email or password")
-    login_limiter.clear_address(body.email, ip)
     tokens = _issue_tokens(db, user)
     db.commit()
+    login_limiter.succeeded(attempt)
     return tokens
 
 
@@ -162,9 +161,8 @@ def logout(body: RefreshIn, db: Db) -> Response:
 def forgot_password(body: ForgotPasswordIn, db: Db) -> dict[str, str]:
     """Email a single-use reset code. The answer is the same whether or not the email is registered."""
     answer = {"detail": "if this email is registered, a reset code has been sent"}
-    if reset_limiter.blocked(body.email):
+    if not reset_limiter.allow(body.email):
         return answer
-    reset_limiter.record_failure(body.email)
     user = db.scalar(select(User).where(User.email == body.email))
     if user is None:
         return answer

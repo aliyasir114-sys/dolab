@@ -1,5 +1,6 @@
 """Step A of the phase-1 plan: status transitions (T1–T4), time zones, sign-in limits,
 concurrent wear records and CORS."""
+import ipaddress
 from datetime import date, datetime, timezone
 
 import pytest
@@ -154,10 +155,11 @@ def test_time_zone_is_validated_and_can_be_changed(client, signup):
 
 @pytest.fixture
 def behind_one_proxy():
-    original = settings.trusted_proxy_hops
-    object.__setattr__(settings, "trusted_proxy_hops", 1)
+    """The test client's own address (127.0.0.1) is a trusted proxy."""
+    original = settings.trusted_proxies
+    object.__setattr__(settings, "trusted_proxies", (ipaddress.ip_network("127.0.0.1/32"),))
     yield
-    object.__setattr__(settings, "trusted_proxy_hops", original)
+    object.__setattr__(settings, "trusted_proxies", original)
 
 
 def attempt(client, password, ip):
@@ -182,9 +184,10 @@ def test_many_addresses_hit_the_email_wide_limit(client, signup, behind_one_prox
     signup("owner@example.com", "correct-horse")
     for n in range(20):
         assert attempt(client, "wrong-password", f"10.0.0.{n}").status_code == 401
+    # Not a lock but a delay (plan 4.7): 30 seconds after the 20th failure.
     blocked = attempt(client, "correct-horse", "10.0.1.1")
     assert blocked.status_code == 429
-    assert blocked.headers["Retry-After"] == "3600"
+    assert blocked.headers["Retry-After"] == "30"
 
 
 def test_forwarded_header_is_ignored_without_a_trusted_proxy(client, signup):

@@ -439,7 +439,7 @@ def test_db22_migrations_on_empty_database_as_deploy(scratch_db, monkeypatch):
     command.upgrade(config, "head")
     command.check(config)  # the models and the migrations agree
     with connect(database=scratch_db) as conn:
-        assert value(conn, "SELECT version_num FROM dolab.alembic_version") == "0002_app_privileges"
+        assert value(conn, "SELECT version_num FROM dolab.alembic_version") == "0003_rate_limit_events"
         assert set(owners(conn, _TABLES).values()) == {E.OWNER}
         for table, expected in E.TABLES.items():
             assert acl(conn, _TABLES)[table] == expected, table

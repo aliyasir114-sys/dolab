@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from . import clock
@@ -174,3 +174,22 @@ class DonationItem(Base):
 
     donation_id: Mapped[str] = mapped_column(_ID, ForeignKey("donations.id"), primary_key=True)
     item_id: Mapped[str] = mapped_column(_ID, ForeignKey("items.id"), primary_key=True)
+
+
+class RateLimitEvent(Base):
+    """One counted attempt (sign-in or reset email), shared by every server process (plan 4.7).
+
+    No email or address is stored: key_hash and subject_hash are keyed hashes (HMAC) of them.
+    Rows live at most a few hours and are not linked to an account.
+    """
+
+    __tablename__ = "rate_limit_events"
+    # Counting a key's events in a time window; the name is what the naming convention gives.
+    __table_args__ = (Index("ix_rate_limit_events_scope", "scope", "key_hash", "at"),)
+
+    id: Mapped[str] = mapped_column(_ID, primary_key=True, default=new_id)
+    scope: Mapped[str] = mapped_column(String(32))
+    key_hash: Mapped[str] = mapped_column(String(64))
+    # The email the event is about, so a password reset can clear every limit for that email.
+    subject_hash: Mapped[str] = mapped_column(String(64), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
