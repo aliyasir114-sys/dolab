@@ -2,6 +2,7 @@
 MinIO-only checks are in test_s3_storage.py."""
 import os
 import subprocess
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from app.storage import LocalStorage, S3Storage, StorageUnavailable, check_key, 
 from tests.test_photos import make_image, new_item, stored_files, upload
 
 API_DIR = Path(__file__).resolve().parents[1]
+MODIFIED = datetime(2026, 11, 23, 8, 0, tzinfo=timezone.utc)
 
 
 @pytest.mark.parametrize("key", ["", "/abs", "../x", "a/../b", "a//b", "a/./b", "a\\b", "a b", ".hidden", "a/" + "x" * 600])
@@ -40,6 +42,25 @@ def test_local_storage_round_trip(tmp_path):
     assert LocalStorage(str(tmp_path / "missing")).list_keys("") == []
 
 
+def test_local_disk_errors_are_storage_unavailable(tmp_path, monkeypatch):
+    import pathlib
+
+    local = LocalStorage(str(tmp_path))
+    local.save("u/a_thumb.jpg", b"x")
+
+    def broken(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    for name in ("unlink", "read_bytes", "write_bytes"):
+        with monkeypatch.context() as patch:
+            patch.setattr(pathlib.Path, name, broken)
+            with pytest.raises(StorageUnavailable):
+                {"unlink": lambda: local.delete("u/a_thumb.jpg"),
+                 "read_bytes": lambda: local.read("u/a_thumb.jpg"),
+                 "write_bytes": lambda: local.save("u/b_thumb.jpg", b"y")}[name]()
+    assert local.read("u/a_thumb.jpg") == b"x"
+
+
 def test_s3_asks_for_server_side_encryption_and_maps_errors():
     import boto3
 
@@ -54,9 +75,9 @@ def test_s3_asks_for_server_side_encryption_and_maps_errors():
         stub.add_client_error("delete_object", "AccessDenied", http_status_code=403)
         with pytest.raises(StorageUnavailable):
             s3.delete("u/p_thumb.jpg")
-        stub.add_response("list_objects_v2", {"Contents": [{"Key": "u/b"}], "IsTruncated": True, "NextContinuationToken": "t"},
+        stub.add_response("list_objects_v2", {"Contents": [{"Key": "u/b", "LastModified": MODIFIED}], "IsTruncated": True, "NextContinuationToken": "t"},
                           {"Bucket": "bucket", "Prefix": "u/"})
-        stub.add_response("list_objects_v2", {"Contents": [{"Key": "u/a"}], "IsTruncated": False},
+        stub.add_response("list_objects_v2", {"Contents": [{"Key": "u/a", "LastModified": MODIFIED}], "IsTruncated": False},
                           {"Bucket": "bucket", "Prefix": "u/", "ContinuationToken": "t"})
         assert s3.list_keys("u/") == ["u/a", "u/b"]
         stub.assert_no_pending_responses()
