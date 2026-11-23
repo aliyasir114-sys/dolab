@@ -82,3 +82,29 @@ def test_x5_an_item_renamed_after_the_snapshot_keeps_its_old_name(client, signup
     assert names[item_ids[0]] == "Classic white shirt"
     with SessionLocal() as db:
         assert db.scalar(select(Item.name).where(Item.id == item_ids[0])) == "Renamed shirt"
+
+
+def test_x3_photos_added_after_the_snapshot_do_not_count_against_the_limit(client, signup, monkeypatch):
+    # 3000 photos (the limit) when the snapshot opens; 10 more arrive while the export runs.
+    from tests.test_export_limits import bulk_wardrobe
+
+    headers = signup()
+    user_id = client.get("/me", headers=headers).json()["id"]
+    item_ids = bulk_wardrobe(user_id, items=500, photos=3000, photo_bytes=1024)
+
+    def ten_more():
+        with SessionLocal.begin() as db:
+            for _ in range(10):
+                photo_id = new_id()
+                db.add(ItemPhoto(id=photo_id, item_id=item_ids[0], user_id=user_id,
+                                 original_key=f"{user_id}/{photo_id}_original.jpg",
+                                 thumb_key=f"{user_id}/{photo_id}_thumb.jpg", content_type="image/jpeg",
+                                 width=1, height=1, size_bytes=1024))
+
+    monkeypatch.setattr(export, "_after_snapshot", ten_more)
+    response, archive = download(client, headers)
+    assert response.status_code == 200
+    manifest = check_manifest(archive)
+    assert manifest["snapshot"]["photo_count"] == 3000
+    assert manifest["photos_written"] == 3000
+    assert len(read_json(archive, "data.json")["photos"]) == 3000

@@ -2,7 +2,6 @@ from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
@@ -26,7 +25,7 @@ from ..models import (
     new_id,
     utcnow,
 )
-from ..ratelimit import login_limiter, reset_limiter
+from ..ratelimit import export_limiter, login_limiter, reset_limiter
 from ..schemas import (
     AccountPatch,
     ChangePasswordIn,
@@ -39,7 +38,8 @@ from ..schemas import (
     TokenOut,
     UserOut,
 )
-from ..export import build_zip, export_payload
+from .. import export
+from ..export import export_payload
 from ..services import delete_photo_files
 from ..storage import StorageUnavailable
 from ..security import create_token, hash_password, new_secret_token, token_hash, verify_password
@@ -243,21 +243,47 @@ def export_data(user: CurrentUser, db: Db) -> dict:
 @router.get("/me/export.zip", response_class=FileResponse)
 def export_zip(user: CurrentUser, db: Db) -> FileResponse:
     """Everything DOLAB stores about the signed-in user, with the photo files, as one ZIP file
-    (plan 4.3): data.json, photos/<item_id>/<photo_id>.<ext>, manifest.json."""
+    (plan 4.3): data.json, photos/<item_id>/<photo_id>.<ext>, manifest.json.
+
+    413 over a size limit (checked before any photo is read), 429 after DOLAB_EXPORT_PER_HOUR
+    exports in an hour, 503 when this server already builds DOLAB_EXPORT_CONCURRENCY exports,
+    when the build runs out of time, or when photo storage is unavailable."""
     user_id = user.id
     db.close()  # do not hold the request's connection while the file is built
+    if not export.slots.acquire(blocking=False):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "too many exports in progress, try again shortly",
+                            headers={"Retry-After": "30"})
     try:
-        path = build_zip(user_id)
-    except StorageUnavailable as error:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "photo storage is unavailable, try again shortly",
-                            headers={"Retry-After": "30"}) from error
-    return FileResponse(
+        attempt = export_limiter.start(user_id)
+        if attempt.wait is not None:
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many exports this hour, try again later",
+                                headers={"Retry-After": str(attempt.wait)})
+        try:
+            path = export.build_zip(user_id)
+        except BaseException as error:
+            # A failed export does not use up the hour.
+            export_limiter.forget(attempt)
+            if isinstance(error, export.ExportTooLarge):
+                raise HTTPException(
+                    413,
+                    f"this wardrobe is too large to export at once ({error}); "
+                    "large exports will come later as a background job",
+                ) from error
+            if isinstance(error, export.ExportTimeout):
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "the export took too long, try again later",
+                                    headers={"Retry-After": "60"}) from error
+            if isinstance(error, StorageUnavailable):
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                    "photo storage is unavailable, try again shortly",
+                                    headers={"Retry-After": "30"}) from error
+            raise
+    finally:
+        export.slots.release()
+    return export.TemporaryFileResponse(
         path,
         media_type="application/zip",
         filename=f"dolab-export-{clock.now().date().isoformat()}.zip",
         headers={"Cache-Control": "no-store"},
-        # Sent, then deleted.
-        background=BackgroundTask(path.unlink, missing_ok=True),
     )
 
 
