@@ -97,7 +97,11 @@ def export_payload(db: Session, user: User) -> dict:
 
 def _snapshot_session() -> Session:
     db = SessionLocal()
-    if not is_sqlite:
+    if is_sqlite:
+        # SQLite does not begin a read transaction for SELECTs on its own.  An explicit
+        # transaction makes the first count establish a snapshot shared by every later SELECT.
+        db.connection().exec_driver_sql("BEGIN")
+    else:
         # Every statement of the transaction sees the database as of its first statement.
         db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
     return db

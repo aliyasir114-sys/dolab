@@ -12,8 +12,8 @@ from sqlalchemy import select
 
 from app import export
 from app.config import settings
-from app.db import SessionLocal
-from app.models import ItemPhoto
+from app.db import SessionLocal, engine
+from app.models import ItemPhoto, new_id
 from app.storage import StorageUnavailable, storage
 from tests.test_photos import make_image, new_item, upload
 
@@ -165,12 +165,46 @@ def test_e10_an_export_holds_only_its_owners_data(client, signup):
         assert own in everything
 
 
+@pytest.mark.skipif(engine.dialect.name != "sqlite", reason="needs SQLite")
+def test_sqlite_export_keeps_a_stable_snapshot_during_a_concurrent_write(client, signup, monkeypatch):
+    # WAL lets the synchronous writer commit while this export holds a real read snapshot.
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+
+    headers, _, photos = wardrobe(client, signup)
+    with SessionLocal() as db:
+        template = db.get(ItemPhoto, photos[0]["id"])
+        user_id, item_id = template.user_id, template.item_id
+    late_id = new_id()
+
+    def add_photo():
+        key = f"{user_id}/{late_id}_original.jpg"
+        storage.save(key, b"late")
+        storage.save(f"{user_id}/{late_id}_thumb.jpg", b"late")
+        with SessionLocal.begin() as db:
+            db.add(ItemPhoto(id=late_id, item_id=item_id, user_id=user_id, original_key=key,
+                             thumb_key=f"{user_id}/{late_id}_thumb.jpg", content_type="image/jpeg",
+                             width=1, height=1, size_bytes=4))
+
+    monkeypatch.setattr(export, "_after_snapshot", add_photo)
+    response, archive = download(client, headers)
+
+    assert response.status_code == 200
+    manifest = check_manifest(archive)
+    data = read_json(archive, "data.json")
+    assert manifest["snapshot"]["photo_count"] == 3
+    assert len(data["photos"]) == 3
+    assert late_id not in archive.read("data.json").decode()
+    assert not any(late_id in name for name in archive.namelist())
+
+
 def test_the_temporary_file_is_private_and_removed_on_failure(client, signup, monkeypatch):
     headers, _, _ = wardrobe(client, signup)
     user_id = client.get("/me", headers=headers).json()["id"]
     path = export.build_zip(user_id)
     try:
-        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
         assert zipfile.ZipFile(path).testzip() is None
     finally:
         path.unlink()
