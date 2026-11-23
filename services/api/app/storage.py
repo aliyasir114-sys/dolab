@@ -12,6 +12,7 @@ through the API, which checks the file and strips its metadata first.
 """
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,10 @@ log = logging.getLogger("dolab.storage")
 
 # Keys are made by the server ("<user id>/<photo id>_original.jpg"); anything else is refused.
 _KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
+
+
+# Large reads (the ZIP export) go through read_chunks in blocks of this size, never whole.
+CHUNK = 1024 * 1024
 
 
 class StorageUnavailable(RuntimeError):
@@ -44,6 +49,7 @@ class StoredObject:
 class Storage(Protocol):
     def save(self, key: str, data: bytes) -> None: ...
     def read(self, key: str) -> bytes | None: ...
+    def read_chunks(self, key: str, chunk_size: int = CHUNK) -> Iterator[bytes] | None: ...
     def delete(self, key: str) -> None: ...
     def list_keys(self, prefix: str) -> list[str]: ...
     def list_objects(self, prefix: str) -> list[StoredObject]: ...
@@ -77,6 +83,29 @@ class LocalStorage:
             return path.read_bytes() if path.is_file() else None
         except OSError as error:
             raise StorageUnavailable(f"storage read failed: {type(error).__name__}") from error
+
+    def read_chunks(self, key: str, chunk_size: int = CHUNK) -> Iterator[bytes] | None:
+        """The file in blocks, or None if it does not exist. A failure part-way raises StorageUnavailable."""
+        path = self._path(key)
+        try:
+            handle = path.open("rb")
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise StorageUnavailable(f"storage read failed: {type(error).__name__}") from error
+
+        def blocks() -> Iterator[bytes]:
+            with handle:
+                while True:
+                    try:
+                        block = handle.read(chunk_size)
+                    except OSError as error:
+                        raise StorageUnavailable(f"storage read failed: {type(error).__name__}") from error
+                    if not block:
+                        return
+                    yield block
+
+        return blocks()
 
     def delete(self, key: str) -> None:
         try:
@@ -154,6 +183,25 @@ class S3Storage:
             return response["Body"].read()
         except BotoCoreError as error:
             raise StorageUnavailable("storage read failed") from error
+
+    def read_chunks(self, key: str, chunk_size: int = CHUNK) -> Iterator[bytes] | None:
+        """The object in blocks, or None if it does not exist. A failure part-way raises StorageUnavailable."""
+        response = self._call("get_object", Key=check_key(key))
+        if response is None:
+            return None
+        body = response["Body"]
+
+        def blocks() -> Iterator[bytes]:
+            try:
+                yield from body.iter_chunks(chunk_size)
+            except StorageUnavailable:
+                raise
+            except Exception as error:  # botocore, urllib3 or socket errors mid-stream
+                raise StorageUnavailable(f"storage read failed: {type(error).__name__}") from error
+            finally:
+                body.close()
+
+        return blocks()
 
     def delete(self, key: str) -> None:
         self._call("delete_object", Key=check_key(key))
