@@ -272,9 +272,9 @@ def test_e6_the_clean_up_removes_old_files_and_keeps_new_and_active_ones(client)
     new = make_temp(f"export-{uuid.uuid4()}.zip", timedelta(minutes=5))
     busy = make_temp(f"export-{uuid.uuid4()}.zip", timedelta(hours=2))
     other = make_temp("not-an-export.txt", timedelta(hours=2))
-    with export._active_lock:
-        export._active.add(str(busy))  # still being built or sent here
     try:
+        with export._active_lock:
+            export._active[str(busy)] = time.monotonic()  # still being built or sent here
         assert export.clean_temporary(export.PERIODIC_AGE) == [old.name]
         assert new.exists() and busy.exists() and other.exists()
         # At start-up anything untouched for 10 minutes goes, still never an active file.
