@@ -19,6 +19,13 @@ class Settings:
     media_dir: str
     # Where ZIP exports are built before they are sent (plan 4.3). Never uploaded anywhere.
     export_tmp_dir: str
+    # ZIP export limits (plan 4.3), checked against the export's own snapshot.
+    export_max_bytes: int  # all photos together
+    export_max_files: int  # photos
+    export_max_data_bytes: int  # data.json
+    export_per_hour: int  # per user, shared by every server instance
+    export_concurrency: int  # at once, per server instance
+    export_build_seconds: float
     # Photo storage: "local" (DOLAB_MEDIA_DIR; development) or "s3" (plan 4.6).
     storage: str
     s3_bucket: str
@@ -52,12 +59,31 @@ def load_settings() -> Settings:
         reset_minutes=int(os.getenv("DOLAB_RESET_MINUTES", "30")),
         media_dir=os.getenv("DOLAB_MEDIA_DIR", "./media"),
         export_tmp_dir=os.getenv("DOLAB_EXPORT_TMP_DIR", os.path.join(tempfile.gettempdir(), "dolab-exports")),
+        export_max_bytes=_positive_int("DOLAB_EXPORT_MAX_BYTES", 500 * 1024 * 1024),
+        export_max_files=_positive_int("DOLAB_EXPORT_MAX_FILES", 3000),
+        export_max_data_bytes=_positive_int("DOLAB_EXPORT_MAX_DATA_BYTES", 8 * 1024 * 1024),
+        export_per_hour=_positive_int("DOLAB_EXPORT_PER_HOUR", 3),
+        export_concurrency=_positive_int("DOLAB_EXPORT_CONCURRENCY", 2),
+        export_build_seconds=float(_positive_int("DOLAB_EXPORT_BUILD_SECONDS", 120)),
         **_storage_settings(environment),
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
         cors_origins=_cors_origins(os.getenv("DOLAB_CORS_ORIGINS", "")),
         trusted_proxies=_trusted_proxies(os.getenv("DOLAB_TRUSTED_PROXIES", "")),
     )
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a whole number") from error
+    if value < 1:
+        raise RuntimeError(f"{name} must be at least 1")
+    return value
 
 
 def _storage_settings(environment: str) -> dict:

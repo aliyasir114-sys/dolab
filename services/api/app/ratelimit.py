@@ -184,5 +184,32 @@ class ResetLimiter:
         LoginLimiter().reset()
 
 
+@dataclass
+class ExportAttempt:
+    wait: int | None = None
+    ids: list[str] = field(default_factory=list)
+
+
+class ExportLimiter:
+    """ZIP exports: at most DOLAB_EXPORT_PER_HOUR (3) an hour per user (plan 4.3), counted across
+    every server instance. An export that fails is forgotten, so it does not use up the hour."""
+
+    window = timedelta(hours=1)
+
+    def start(self, user_id: str) -> ExportAttempt:
+        key = _Key("export_user", _hash("export_user", user_id), _hash("subject_user", user_id))
+        now, ids = _record([key])
+        earlier = _others(key, ids[0], now - self.window)
+        if len(earlier) >= settings.export_per_hour:
+            _forget(ids)
+            return ExportAttempt(wait=_seconds(earlier[len(earlier) - settings.export_per_hour] + self.window - now))
+        return ExportAttempt(ids=ids)
+
+    def forget(self, attempt: ExportAttempt) -> None:
+        _forget(attempt.ids)
+        attempt.ids = []
+
+
 login_limiter = LoginLimiter()
+export_limiter = ExportLimiter()
 reset_limiter = ResetLimiter()

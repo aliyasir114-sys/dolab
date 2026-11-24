@@ -206,8 +206,10 @@ def test_the_temporary_file_is_private_and_removed_on_failure(client, signup, mo
         if os.name != "nt":
             assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
         assert zipfile.ZipFile(path).testzip() is None
+        assert str(path) in export.active_files()  # protected from the clean-up until sent
     finally:
-        path.unlink()
+        export.release_file(path)
+    assert str(path) not in export.active_files()
 
     def boom():
         raise RuntimeError("database went away")

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import Base, engine, is_sqlite
+from .export import Cleaner
 from .routers import auth, dashboard, donations, items, photos
 
 
@@ -15,7 +16,13 @@ async def lifespan(app: FastAPI):
     # identity before the server starts); the API role cannot create tables there at all.
     if is_sqlite:
         Base.metadata.create_all(engine)
-    yield
+    # Export files left by a crash: removed now, then every 10 minutes (plan 4.3).
+    cleaner = Cleaner()
+    cleaner.start()
+    try:
+        yield
+    finally:
+        cleaner.stop()
 
 
 app = FastAPI(title="DOLAB API", version="0.1.0", lifespan=lifespan)
