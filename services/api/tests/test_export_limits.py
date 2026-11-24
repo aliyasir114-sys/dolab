@@ -189,16 +189,70 @@ def test_e8_a_fourth_export_in_an_hour_is_429_and_failures_do_not_count(client, 
 
 def test_e9_a_third_export_at_once_is_503(client, signup):
     headers, _, _ = wardrobe(client, signup)
-    taken = [export.slots.acquire(blocking=False) for _ in range(settings.export_concurrency)]
+    taken = [export.reserve() for _ in range(settings.export_concurrency)]
     try:
-        assert all(taken)
         refused = client.get("/me/export.zip", headers=headers)
         assert refused.status_code == 503
         assert refused.headers["Retry-After"] == "30"
+        with pytest.raises(export.ExportBusy):
+            export.reserve()
     finally:
-        for _ in taken:
-            export.slots.release()
-    assert client.get("/me/export.zip", headers=headers).status_code == 200  # the slot was given back
+        for place in taken:
+            export.release_file(place)
+    assert client.get("/me/export.zip", headers=headers).status_code == 200  # the place was given back
+    assert export.active_files() == set()
+
+
+def test_a_place_is_held_until_the_file_has_been_sent(client, signup):
+    # Review of PR #48: two exports still downloading keep a third out; when one finishes
+    # sending, its place comes back.
+    import asyncio
+
+    headers, _, _ = wardrobe(client, signup)
+    user_id = user_id_of(client, headers)
+    responses = []
+    for _ in range(2):
+        place = export.reserve()
+        responses.append(export.TemporaryFileResponse(export.build_zip(user_id, path=place),
+                                                      media_type="application/zip"))
+    started = [threading.Event(), threading.Event()]
+    finish = [threading.Event(), threading.Event()]
+    received = [bytearray(), bytearray()]
+    scope = {"type": "http", "method": "GET", "headers": [], "path": "/", "query_string": b""}
+
+    def serve(n):
+        async def receive():
+            await asyncio.sleep(3600)  # the client never leaves on its own
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            started[n].set()
+            received[n].extend(message.get("body", b""))
+            # A slow client: nothing more is accepted until the test lets it finish.
+            await asyncio.get_running_loop().run_in_executor(None, finish[n].wait)
+
+        asyncio.run(responses[n](scope, receive, send))
+
+    threads = [threading.Thread(target=serve, args=(n,)) for n in range(2)]
+    for thread in threads:
+        thread.start()
+    try:
+        assert all(s.wait(10) for s in started)
+        # Both builds are done; both files are still being sent.
+        assert len(export.active_files()) == 2
+        assert client.get("/me/export.zip", headers=headers).status_code == 503
+        finish[0].set()
+        threads[0].join(10)
+        assert len(export.active_files()) == 1  # the first download ended: its place is back
+        assert zipfile.ZipFile(io.BytesIO(bytes(received[0]))).testzip() is None
+        assert client.get("/me/export.zip", headers=headers).status_code == 200
+    finally:
+        for event in finish:
+            event.set()
+        for thread in threads:
+            thread.join(10)
+    assert export.active_files() == set()
+    assert temp_files() == []
 
 
 # ------------------------------------------------------------------ temporary files

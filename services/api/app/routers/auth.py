@@ -250,18 +250,21 @@ def export_zip(user: CurrentUser, db: Db) -> FileResponse:
     when the build runs out of time, or when photo storage is unavailable."""
     user_id = user.id
     db.close()  # do not hold the request's connection while the file is built
-    if not export.slots.acquire(blocking=False):
+    try:
+        # One of this instance's places, held until the file has been sent (or the client left).
+        place = export.reserve()
+    except export.ExportBusy as error:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "too many exports in progress, try again shortly",
-                            headers={"Retry-After": "30"})
+                            headers={"Retry-After": "30"}) from error
     try:
         attempt = export_limiter.start(user_id)
         if attempt.wait is not None:
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many exports this hour, try again later",
                                 headers={"Retry-After": str(attempt.wait)})
         try:
-            path = export.build_zip(user_id)
+            path = export.build_zip(user_id, path=place)
         except BaseException as error:
-            # A failed export does not use up the hour.
+            # A failed export does not use up the hour (and build_zip gave the place back).
             export_limiter.forget(attempt)
             if isinstance(error, export.ExportTooLarge):
                 raise HTTPException(
@@ -277,8 +280,10 @@ def export_zip(user: CurrentUser, db: Db) -> FileResponse:
                                     "photo storage is unavailable, try again shortly",
                                     headers={"Retry-After": "30"}) from error
             raise
-    finally:
-        export.slots.release()
+    except BaseException:
+        export.release_file(place)  # refused or failed: the place is free again at once
+        raise
+    # From here the response owns the place: it gives it back when sending ends.
     return export.TemporaryFileResponse(
         path,
         media_type="application/zip",

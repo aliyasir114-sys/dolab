@@ -4,14 +4,16 @@ only: SQLite does not give the REPEATABLE READ isolation these rely on.
 Each test changes the database from another connection right after the export's snapshot has
 opened (the export's _after_snapshot hook), the way a second request from the same user would.
 """
+import time
+
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 
 from app import export
 from app.db import SessionLocal, engine
 from app.models import Item, ItemPhoto, new_id
 from app.storage import storage
-from tests.test_export_zip import check_manifest, download, read_json, wardrobe
+from tests.test_export_zip import check_manifest, download, read_json, temp_files, wardrobe
 
 pytestmark = pytest.mark.skipif(engine.dialect.name != "postgresql", reason="needs PostgreSQL")
 
@@ -108,3 +110,26 @@ def test_x3_photos_added_after_the_snapshot_do_not_count_against_the_limit(clien
     assert manifest["snapshot"]["photo_count"] == 3000
     assert manifest["photos_written"] == 3000
     assert len(read_json(archive, "data.json")["photos"]) == 3000
+
+
+def test_a_slow_query_late_in_the_build_is_stopped_at_the_deadline(client, signup, monkeypatch):
+    # Review of PR #48: statement_timeout follows the time left, so a query that starts after
+    # part of the time is gone cannot run past the deadline.
+    headers, _, _ = wardrobe(client, signup)
+    user_id = client.get("/me", headers=headers).json()["id"]
+    real = export.write_export_json
+
+    def slow(db, user, write):
+        time.sleep(1.5)  # most of the time is gone
+        db.execute(text("SELECT pg_sleep(10)"))  # then a statement that would run long
+        real(db, user, write)
+
+    monkeypatch.setattr(export, "write_export_json", slow)
+    started = time.monotonic()
+    with pytest.raises(export.ExportTimeout):
+        export.build_zip(user_id, deadline=started + 2.0)
+    elapsed = time.monotonic() - started
+    # Stopped at the deadline (about 2 s), not 2 s after the query began (3.5 s).
+    assert elapsed < 2.6, elapsed
+    assert temp_files() == []
+    assert export.active_files() == set()

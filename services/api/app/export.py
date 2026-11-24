@@ -15,11 +15,13 @@ Limits (part b), all checked before any photo is read, from the same snapshot:
   DOLAB_EXPORT_MAX_BYTES (500 MB of photos), DOLAB_EXPORT_MAX_FILES (3000 photos),
   DOLAB_EXPORT_MAX_DATA_BYTES (8 MB of data.json) -> ExportTooLarge (413).
 The route adds DOLAB_EXPORT_PER_HOUR (3 per user, shared, 429) and DOLAB_EXPORT_CONCURRENCY
-(2 at once per instance, 503).
+(2 at once per instance, 503). An export holds its place from the start of the build until its
+file has been sent, or the client has gone (review of PR #48).
 
 Time. DOLAB_EXPORT_BUILD_SECONDS (120): the build runs in the request's own thread and checks
-its deadline between steps and between blocks; on PostgreSQL each statement also gets the time
-left as statement_timeout. Past the deadline the build stops where it is and its file is
+its deadline between steps and between blocks; on PostgreSQL, statement_timeout is set to the
+time left before every statement and again while data.json streams (each fetch of the cursor
+is a statement too), so no query can run past the deadline (review of PR #48). Past the deadline the build stops where it is and its file is
 deleted (ExportTimeout, 503). A single storage read in progress can overrun by at most its own
 timeout (30 s on S3).
 
@@ -43,7 +45,7 @@ from collections.abc import Callable, Iterator
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
@@ -70,8 +72,8 @@ class ExportTimeout(Exception):
     """The build ran past DOLAB_EXPORT_BUILD_SECONDS and was stopped."""
 
 
-# Exports at once in this server instance (DOLAB_EXPORT_CONCURRENCY).
-slots = threading.BoundedSemaphore(settings.export_concurrency)
+class ExportBusy(Exception):
+    """This server instance already has DOLAB_EXPORT_CONCURRENCY exports building or sending."""
 
 
 def _dumps(value) -> str:
@@ -130,27 +132,44 @@ def export_payload(db: Session, user: User) -> dict:
     return json.loads("".join(parts))
 
 
-def _snapshot_session(seconds_left: float) -> Session:
+def _snapshot_session(seconds_left: Callable[[], float]) -> tuple[Session, Callable[[], None]]:
+    """The export's read transaction, and a function that brings PostgreSQL's statement_timeout
+    down to the time left (call it while streaming; it is also called before every statement)."""
     db = SessionLocal()
     if is_sqlite:
         # SQLite does not begin a read transaction for SELECTs on its own.  An explicit
         # transaction makes the first count establish a snapshot shared by every later SELECT.
         db.connection().exec_driver_sql("BEGIN")
-    else:
-        # Every statement of the transaction sees the database as of its first statement.
-        db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        # No statement may outlive the export's deadline. (SET takes no snapshot.)
-        db.execute(text(f"SET LOCAL statement_timeout = {max(1, int(seconds_left * 1000))}"))
-    return db
+        return db, lambda: None
+    # Every statement of the transaction sees the database as of its first statement.
+    connection = db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    driver = connection.connection.driver_connection
+    last = {"ms": None}
+
+    def limit_statements(force: bool = False) -> None:
+        # seconds_left() raises ExportTimeout once the deadline has passed.
+        ms = max(1, int(seconds_left() * 1000))
+        # While streaming, only when the limit has moved by a quarter of a second or more.
+        if force or last["ms"] is None or last["ms"] - ms >= 250:
+            # On the driver's own connection: same transaction, and no recursion into the
+            # event below. SET takes no snapshot.
+            driver.execute(f"SET LOCAL statement_timeout = {ms}")
+            last["ms"] = ms
+
+    event.listen(connection, "before_cursor_execute", lambda *args, **kwargs: limit_statements(force=True))
+    return db, limit_statements
 
 
 def _after_snapshot() -> None:
     """Tests replace this to change the database from another connection once the snapshot is open."""
 
 
-# Files this process is building or sending: the clean-up never touches them.
-_active: set[str] = set()
+# Exports this process is building or sending, by file path, with when each began. Their number
+# is the concurrency limit, and the clean-up never touches their files.
+_active: dict[str, float] = {}
 _active_lock = threading.Lock()
+# A place still held after this long was lost (a response that was never sent): given back.
+STALE_AFTER = timedelta(hours=6)
 
 
 def active_files() -> set[str]:
@@ -158,25 +177,44 @@ def active_files() -> set[str]:
         return set(_active)
 
 
-def _temporary_file() -> tuple[Path, int]:
-    folder = Path(settings.export_tmp_dir)
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path = folder / f"export-{uuid.uuid4()}.zip"
+def _prune_stale(now: float) -> list[str]:
+    stale = [p for p, began in _active.items() if now - began > STALE_AFTER.total_seconds()]
+    for path in stale:
+        del _active[path]
+    return stale
+
+
+def reserve() -> Path:
+    """Take one of this instance's export places and name the file it will use. Raises
+    ExportBusy when all are taken. The place is held until release_file(): after the file has
+    been sent (TemporaryFileResponse), or at once if the export fails."""
     with _active_lock:
-        _active.add(str(path))
+        stale = _prune_stale(time.monotonic())
+        if len(_active) >= settings.export_concurrency:
+            raise ExportBusy("too many exports in progress")
+        path = Path(settings.export_tmp_dir) / f"export-{uuid.uuid4()}.zip"
+        _active[str(path)] = time.monotonic()
+    for lost in stale:
+        log.warning("export place held for over %s given back: %s", STALE_AFTER, Path(lost).name)
+        Path(lost).unlink(missing_ok=True)
+    return path
+
+
+def _temporary_file(path: Path) -> int:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     # Created private (0600) and new: never an existing file, never readable by others.
-    return path, os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
 
 def release_file(path: Path) -> None:
-    """Delete a finished or failed export and stop protecting it."""
+    """Delete a finished or failed export and give its place back."""
     try:
         path.unlink(missing_ok=True)
     except OSError as error:
         log.warning("export file could not be deleted, the clean-up will retry: %s (%s)", path.name, error)
     finally:
         with _active_lock:
-            _active.discard(str(path))
+            _active.pop(str(path), None)
 
 
 def clean_temporary(older_than: timedelta, now: float | None = None) -> list[str]:
@@ -236,7 +274,8 @@ class Cleaner:
 
 
 class TemporaryFileResponse(FileResponse):
-    """Sends the export, then deletes it, whether the download finished or the client left."""
+    """Sends the export, then deletes it and gives its place back, whether the download finished
+    or the client left."""
 
     async def __call__(self, scope, receive, send) -> None:
         try:
@@ -245,11 +284,13 @@ class TemporaryFileResponse(FileResponse):
             release_file(Path(self.path))
 
 
-def build_zip(user_id: str, store: Storage | None = None, *, deadline: float | None = None) -> Path:
+def build_zip(user_id: str, store: Storage | None = None, *, deadline: float | None = None,
+              path: Path | None = None) -> Path:
     """Build the user's export in a temporary file and return its path; the caller sends it with
-    TemporaryFileResponse (or calls release_file). Raises, having deleted the file:
-    ExportTooLarge before any photo is read, ExportTimeout past the deadline (time.monotonic),
-    StorageUnavailable if a photo cannot be read."""
+    TemporaryFileResponse (or calls release_file). `path` is a place from reserve(); without one,
+    a place is reserved here (ExportBusy if none is free). Raises, having deleted the file and
+    given the place back: ExportTooLarge before any photo is read, ExportTimeout past the
+    deadline (time.monotonic), StorageUnavailable if a photo cannot be read."""
     store = store if store is not None else default_storage
     deadline = time.monotonic() + settings.export_build_seconds if deadline is None else deadline
 
@@ -259,10 +300,13 @@ def build_zip(user_id: str, store: Storage | None = None, *, deadline: float | N
             raise ExportTimeout("the export took too long")
         return left
 
-    in_time()
-    path, descriptor = _temporary_file()
+    path = path if path is not None else reserve()
+    descriptor = -1
     try:
-        with _snapshot_session(in_time()) as db:
+        in_time()
+        descriptor = _temporary_file(path)
+        db, limit_statements = _snapshot_session(in_time)
+        with db:
             # 1. What the snapshot holds, and the limits, before anything else is read.
             photo_count, photo_bytes = db.execute(
                 select(func.count(ItemPhoto.id), func.coalesce(func.sum(ItemPhoto.size_bytes), 0))
@@ -294,7 +338,7 @@ def build_zip(user_id: str, store: Storage | None = None, *, deadline: float | N
                         if data_bytes > settings.export_max_data_bytes:
                             raise ExportTooLarge(
                                 f"data larger than {settings.export_max_data_bytes // (1024 * 1024)} MB")
-                        in_time()
+                        limit_statements()  # also checks the deadline
                         out.write(block)
 
                     write_export_json(db, user, write)
