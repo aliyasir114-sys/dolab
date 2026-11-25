@@ -8,5 +8,8 @@ pillow>=10,<13
 python-multipart>=0.0.9,<1
 # S3-compatible photo storage (plan 4.6, step C-2)
 boto3>=1.35,<2
+# Ed25519 signatures of the deletion ledger (plan 4.10.1). The tested version is pinned in
+# constraints.txt.
+cryptography>=44,<51
 # Time zone database for zoneinfo on systems that do not ship one
 tzdata>=2024.1
