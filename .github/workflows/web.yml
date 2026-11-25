@@ -58,7 +58,7 @@ jobs:
           # The site's server is the only trusted proxy (step C-1; e2e/address.test.ts).
           DOLAB_TRUSTED_PROXIES: 127.0.0.1/32,::1/128
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c constraints.txt
           nohup uvicorn app.main:app --port 8000 > /tmp/api.log 2>&1 &
       - uses: actions/setup-node@v4
         with:

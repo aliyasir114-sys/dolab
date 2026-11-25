@@ -1,0 +1,3 @@
+# Exact versions CI installs and tests (pip install ... -c constraints.txt). requirements.txt
+# keeps the accepted range; a version change here is a reviewed change, tested in CI.
+cryptography==50.0.2
