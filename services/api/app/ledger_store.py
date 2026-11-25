@@ -65,38 +65,50 @@ class LocalLedger:
             raise LedgerUnavailable(f"ledger write failed: {type(error).__name__}") from error
 
 
+# Socket timeouts (connect, read) of the ledger's S3 clients, largest first. Each attempt uses the
+# largest whose total fits in the time it has left, so a write never outlasts its budget.
+TIERS = ((CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS), (0.3, 0.6), (0.15, 0.3), (0.05, 0.1))
+
+
+def _make_client(endpoint_url: str | None, region: str, connect: float, read: float):
+    """One S3 client from a session of its own. boto3.client() would use the shared default
+    session, which is not safe to use from several threads at once; the session made here is
+    used only to make this client, in one thread at start-up, and never shared. The client
+    itself is safe to share between threads (Boto3 guide, "Clients")."""
+    import boto3.session
+    from botocore.config import Config
+
+    return boto3.session.Session().client(
+        "s3", endpoint_url=endpoint_url, region_name=region,
+        config=Config(connect_timeout=connect, read_timeout=read, retries={"total_max_attempts": 1},
+                      s3={"addressing_style": "path"} if endpoint_url else {}),
+    )
+
+
 class S3Ledger:
-    """The ledger bucket. Short timeouts and no client retries: write_entry keeps the budget."""
+    """The ledger bucket. Its clients are made once, at start-up, one per timeout tier, and then
+    shared by every request thread: no client or session is made while a deletion waits.
+    No client retries: write_entry keeps the budget."""
 
     def __init__(self, bucket: str, *, endpoint_url: str | None = None, region: str = "us-east-1",
-                 encryption: str | None = "AES256") -> None:
+                 encryption: str | None = "AES256", clients=None) -> None:
         self.bucket, self.encryption = bucket, encryption
-        self.endpoint_url, self.region = endpoint_url, region
+        # [(connect + read seconds, client)], largest first. Tests may pass their own.
+        self.clients = clients if clients is not None else [
+            (connect + read, _make_client(endpoint_url, region, connect, read)) for connect, read in TIERS
+        ]
 
     def put(self, name: str, body: bytes) -> None:
-        self.put_with_timeout(name, body, CONNECT_TIMEOUT_SECONDS + READ_TIMEOUT_SECONDS)
+        self.put_with_timeout(name, body, self.clients[0][0])
 
     def put_with_timeout(self, name: str, body: bytes, timeout: float) -> None:
         from botocore.exceptions import BotoCoreError, ClientError
 
-        if timeout <= 0:
+        client = next((c for total, c in self.clients if total <= timeout), None)
+        if client is None:
             raise LedgerUnavailable("ledger write deadline exceeded")
-        import boto3
-        from botocore.config import Config
-
-        half_timeout = timeout / 2
-        client = None
+        extra = {"ServerSideEncryption": self.encryption} if self.encryption else {}
         try:
-            client = boto3.client(
-                "s3", endpoint_url=self.endpoint_url, region_name=self.region,
-                config=Config(
-                    connect_timeout=min(CONNECT_TIMEOUT_SECONDS, half_timeout),
-                    read_timeout=min(READ_TIMEOUT_SECONDS, half_timeout),
-                    retries={"total_max_attempts": 1},
-                    s3={"addressing_style": "path"} if self.endpoint_url else {},
-                ),
-            )
-            extra = {"ServerSideEncryption": self.encryption} if self.encryption else {}
             client.put_object(Bucket=self.bucket, Key=name, Body=body, ContentType="application/json",
                               IfNoneMatch="*", **extra)
         except ClientError as error:
@@ -106,9 +118,6 @@ class S3Ledger:
             raise LedgerUnavailable(f"ledger write failed: {code}") from error
         except BotoCoreError as error:
             raise LedgerUnavailable(f"ledger write failed: {type(error).__name__}") from error
-        finally:
-            if client is not None:
-                client.close()
 
 
 def write_entry(writer: LedgerWriter, entry: Entry, *, attempts: int = ATTEMPTS,
