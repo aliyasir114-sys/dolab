@@ -294,17 +294,18 @@ def test_an_entry_is_never_replaced(client, tmp_path):
     for writer in (ledger_store.LocalLedger(str(tmp_path)), ledger_store.writer):
         ledger_store.write_entry(writer, entry)
         calls = []
-        real_put = writer.put
+        method = "put_with_timeout" if hasattr(writer, "put_with_timeout") else "put"
+        real_put = getattr(writer, method)
 
-        def counting(name, body, real_put=real_put):
+        def counting(name, body, *args, real_put=real_put):
             calls.append(name)
-            return real_put(name, body)
+            return real_put(name, body, *args)
 
-        writer.put = counting
+        setattr(writer, method, counting)
         with pytest.raises(ledger_store.LedgerEntryExists):
             ledger_store.write_entry(writer, entry)
         assert len(calls) == 1  # not retried
-        del writer.put
+        delattr(writer, method)
 
 
 def test_local_entries_are_private_files(tmp_path):
