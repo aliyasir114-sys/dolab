@@ -6,6 +6,7 @@ from ..deps import CurrentUser, Db
 from ..media import VARIANTS, InvalidImage, process_image, signature_is_valid, signed_path
 from ..models import ItemPhoto, new_id
 from ..schemas import PhotoOut
+from ..deletion import delete_with_ledger
 from ..services import delete_photo_files
 from ..storage import StorageUnavailable, storage
 from .items import _own_item
@@ -104,8 +105,8 @@ def delete_photo(item_id: str, photo_id: str, user: CurrentUser, db: Db) -> Resp
     photo = db.get(ItemPhoto, photo_id)
     if photo is None or photo.item_id != item.id or photo.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "photo not found")
-    db.delete(photo)
-    db.commit()
+    # The ledger entry first; the deletion only once it is confirmed (plan 4.10.1).
+    delete_with_ledger(db, "photo", photo.id, user.id, lambda session: session.delete(photo))
     delete_photo_files([photo])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -5,7 +5,11 @@ import tempfile
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from . import ledger
+
 _DEV_SECRET = "dev-only-secret-not-for-production-use-0000"
+# DOLAB_ENV: anything else stops the server, so a misspelt "prod" cannot skip the production checks.
+ENVIRONMENTS = ("development", "test", "staging", "production")
 
 
 @dataclass(frozen=True)
@@ -38,10 +42,20 @@ class Settings:
     cors_origins: tuple[str, ...]
     # Proxies whose X-Forwarded-For is believed (the load balancer, the web server). Empty: none.
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+    # Deletion ledger (plan 4.10.1): the Ed25519 seed that signs entries (a secret, from the
+    # secrets manager), its key_id, and where entries are written ("s3": a bucket of its own;
+    # "local": a folder, development and tests only).
+    ledger_signing_key: str
+    ledger_key_id: str
+    ledger_storage: str
+    ledger_bucket: str
+    ledger_dir: str
 
 
 def load_settings() -> Settings:
     environment = os.getenv("DOLAB_ENV", "development")
+    if environment not in ENVIRONMENTS:
+        raise RuntimeError(f"DOLAB_ENV must be one of {', '.join(ENVIRONMENTS)}; got {environment!r}")
     secret = os.getenv("DOLAB_JWT_SECRET", "")
     if not secret:
         if environment == "production":
@@ -66,11 +80,49 @@ def load_settings() -> Settings:
         export_concurrency=_positive_int("DOLAB_EXPORT_CONCURRENCY", 2),
         export_build_seconds=float(_positive_int("DOLAB_EXPORT_BUILD_SECONDS", 120)),
         **_storage_settings(environment),
+        **_ledger_settings(environment),
         max_upload_bytes=int(os.getenv("DOLAB_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024))),
         media_url_seconds=int(os.getenv("DOLAB_MEDIA_URL_SECONDS", "600")),
         cors_origins=_cors_origins(os.getenv("DOLAB_CORS_ORIGINS", "")),
         trusted_proxies=_trusted_proxies(os.getenv("DOLAB_TRUSTED_PROXIES", "")),
     )
+
+
+def _ledger_settings(environment: str) -> dict:
+    strict = environment in ("staging", "production")
+    seed = os.getenv("DOLAB_LEDGER_SIGNING_KEY", "")
+    key_id = os.getenv("DOLAB_LEDGER_KEY_ID", "")
+    if not seed:
+        if strict:
+            raise RuntimeError(f"DOLAB_LEDGER_SIGNING_KEY must be set in {environment}")
+        # Development and tests: the published test key, so deleting works without secrets.
+        seed, key_id = ledger.TEST_SEEDS["test-1"], key_id or "test-1"
+    if not ledger._KEY_ID.fullmatch(key_id):
+        raise RuntimeError("DOLAB_LEDGER_KEY_ID must be 1 to 32 of a-z, 0-9 and -")
+    try:
+        # SIG10: the published test keys cannot sign in staging or production.
+        ledger.check_signing_key_allowed(environment, ledger.private_key_from_seed(seed))
+    except ledger.LedgerError as error:
+        # The message names the rule, never the key.
+        raise RuntimeError(f"DOLAB_LEDGER_SIGNING_KEY refused: {error.code}") from None
+    backend = os.getenv("DOLAB_LEDGER_STORAGE", "s3" if strict else "local")
+    if backend not in ("local", "s3"):
+        raise RuntimeError("DOLAB_LEDGER_STORAGE must be 'local' or 's3'")
+    if strict and backend != "s3":
+        raise RuntimeError(f"DOLAB_LEDGER_STORAGE must be 's3' in {environment}")
+    bucket = os.getenv("DOLAB_LEDGER_BUCKET", "")
+    if backend == "s3":
+        if not bucket:
+            raise RuntimeError("DOLAB_LEDGER_BUCKET must be set when DOLAB_LEDGER_STORAGE is 's3'")
+        if bucket == os.getenv("DOLAB_S3_BUCKET", ""):
+            raise RuntimeError("DOLAB_LEDGER_BUCKET must be a bucket of its own, not the photo bucket")
+    return {
+        "ledger_signing_key": seed,
+        "ledger_key_id": key_id,
+        "ledger_storage": backend,
+        "ledger_bucket": bucket,
+        "ledger_dir": os.getenv("DOLAB_LEDGER_DIR", "./ledger"),
+    }
 
 
 def _positive_int(name: str, default: int) -> int:

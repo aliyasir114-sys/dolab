@@ -43,6 +43,10 @@ _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 _SIG = re.compile(r"[A-Za-z0-9_-]{86}")  # 64 bytes in base64url without padding
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
+# The published test seeds (docs/specs/ledger-entry-v1-vectors.json): development and tests
+# sign with test-1 when no key is configured. Not secret, and refused in staging and production.
+TEST_SEEDS = {"test-1": "0WzzM2YUoxkR4x4tNq7k6gssXFyhAztdg6HpvbNP3tU"}
+
 # Public keys of the published test key pairs (docs/specs/ledger-entry-v1-vectors.json). Their
 # private halves are public knowledge, so staging and production refuse to sign with them.
 TEST_PUBLIC_KEYS = {

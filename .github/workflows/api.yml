@@ -85,6 +85,9 @@ jobs:
       DOLAB_S3_ENDPOINT_URL: http://localhost:9000
       # This MinIO has no key service, so it cannot encrypt at rest; production refuses "none".
       DOLAB_S3_ENCRYPTION: none
+      # The deletion ledger in a bucket of its own (plan 4.10.1).
+      DOLAB_LEDGER_STORAGE: s3
+      DOLAB_LEDGER_BUCKET: dolab-ci-ledger
       # Throwaway credentials for the CI MinIO only.
       AWS_ACCESS_KEY_ID: dolab-ci
       AWS_SECRET_ACCESS_KEY: ci-minio-not-a-secret
@@ -111,7 +114,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live && break; sleep 1; done
           curl -fsS http://localhost:9000/minio/health/live
           docker image inspect cgr.dev/chainguard/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
-          python -c "import boto3; boto3.client('s3', endpoint_url='http://localhost:9000').create_bucket(Bucket='dolab-ci')"
+          python -c "import boto3; c = boto3.client('s3', endpoint_url='http://localhost:9000'); c.create_bucket(Bucket='dolab-ci'); c.create_bucket(Bucket='dolab-ci-ledger')"
       - run: pytest -q -rs
       - name: MinIO log
         if: failure()
