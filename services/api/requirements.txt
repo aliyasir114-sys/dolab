@@ -8,8 +8,13 @@ pillow>=10,<13
 python-multipart>=0.0.9,<1
 # S3-compatible photo storage (plan 4.6, step C-2)
 boto3>=1.35,<2
-# Ed25519 signatures of the deletion ledger (plan 4.10.1). The tested version is pinned in
-# constraints.txt.
-cryptography>=44,<51
+# PyCA supports the main branch and latest release only; 50.0.2 is latest as of 2026-11-25.
+# Reviewed advisories fix unrelated PKCS#7 and wheel/OpenSSL issues, not an Ed25519-specific
+# vulnerability; this floor selects the supported release rather than claiming Ed25519 was affected.
+# https://cryptography.io/en/latest/security/
+# https://cryptography.io/en/latest/changelog/
+# https://github.com/pyca/cryptography/security/advisories/GHSA-g6cj-pr64-35w5
+# https://github.com/pyca/cryptography/security/advisories/GHSA-537c-gmf6-5ccf
+cryptography>=50.0.2,<51
 # Time zone database for zoneinfo on systems that do not ship one
 tzdata>=2024.1

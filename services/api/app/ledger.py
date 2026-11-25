@@ -35,6 +35,7 @@ DOMAIN = "DOLAB-LEDGER-ENTRY"
 MAX_ENTRY_BYTES = 2048
 FIELDS = ("v", "key_id", "entry_id", "entity_type", "entity_id", "user_id", "deleted_at", "sig")
 ENTITY_TYPES = ("item", "photo", "user")
+SIGNING_ENVIRONMENTS = ("development", "test", "staging", "production")
 
 _KEY_ID = re.compile(r"[a-z0-9-]{1,32}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -167,8 +168,10 @@ def public_keys(spec: str) -> dict:
     return keys
 
 
-def check_signing_key_allowed(environment: str, private_key) -> None:
-    """SIG10: a published test key may sign only in development and tests."""
+def check_signing_key_allowed(environment: str | None, private_key) -> None:
+    """SIG10: require a known environment and limit published test keys to development/tests."""
+    if environment not in SIGNING_ENVIRONMENTS:
+        raise LedgerError("bad_environment", "signing environment is missing or unknown")
     if environment in ("staging", "production") and public_key_text(private_key) in TEST_PUBLIC_KEYS.values():
         raise LedgerError("test_key", f"the published test key cannot be used in {environment}")
 
@@ -176,8 +179,10 @@ def check_signing_key_allowed(environment: str, private_key) -> None:
 # ------------------------------------------------------------------ sign
 
 def make_entry(private_key, key_id: str, entity_type: str, entity_id: str, user_id: str,
-               deleted_at: datetime | str, entry_id: str | None = None) -> Entry:
+               deleted_at: datetime | str, entry_id: str | None = None,
+               *, environment: str | None = None) -> Entry:
     """A signed entry for one deletion. Values must already satisfy the rules."""
+    check_signing_key_allowed(environment, private_key)
     moment = deleted_at if isinstance(deleted_at, str) else format_time(deleted_at)
     unsigned = Entry(key_id=key_id, entry_id=entry_id or str(uuid.uuid4()), entity_type=entity_type,
                      entity_id=entity_id, user_id=user_id, deleted_at=moment)

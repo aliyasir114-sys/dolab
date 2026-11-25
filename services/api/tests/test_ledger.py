@@ -24,8 +24,12 @@ PUBLIC = ledger.public_keys(",".join(f"{k['key_id']}:{k['public_b64url']}" for k
 def test_the_pinned_cryptography_is_the_one_tested():
     pinned = re.search(r"^cryptography==(\S+)$", (API_DIR / "constraints.txt").read_text(), re.M).group(1)
     assert version("cryptography") == pinned
-    major = int(pinned.split(".")[0])
-    assert 44 <= major < 51  # the range in requirements.txt
+    minimum, maximum = re.search(
+        r"^cryptography>=(\S+),<(\S+)$", (API_DIR / "requirements.txt").read_text(), re.M
+    ).groups()
+    assert minimum == "50.0.2"
+    assert tuple(map(int, minimum.split("."))) <= tuple(map(int, pinned.split(".")))
+    assert tuple(map(int, pinned.split("."))) < (int(maximum), 0, 0)
 
 
 def test_rfc_8032_test_1():
@@ -59,7 +63,7 @@ def test_sig1_every_valid_vector_is_built_signed_and_accepted_exactly(case):
     assert entry.sig == case["signature_b64url"]
     # Signing the same fields again gives the same signature, byte for byte (Ed25519 is deterministic).
     again = ledger.make_entry(KEYS[entry.key_id], entry.key_id, entry.entity_type, entry.entity_id,
-                              entry.user_id, entry.deleted_at, entry_id=entry.entry_id)
+                              entry.user_id, entry.deleted_at, entry_id=entry.entry_id, environment="test")
     assert again.sig == case["signature_b64url"]
     assert again.object_name == case["object_name"]
 
@@ -110,16 +114,55 @@ def test_sig9_the_domain_line_is_part_of_what_is_signed():
 
 # --------------------------------------------------------------- SIG10 and keys
 
-def test_sig10_the_published_test_keys_cannot_sign_in_staging_or_production():
+def _make_entry(private_key, key_id, environment):
+    template = ledger.parse_entry(VECTORS["valid"][0]["json"].encode())
+    return ledger.make_entry(private_key, key_id, template.entity_type, template.entity_id, template.user_id,
+                             template.deleted_at, entry_id=template.entry_id, environment=environment)
+
+
+@pytest.mark.parametrize("environment", ("staging", "production"))
+def test_sig10_the_published_test_keys_cannot_sign_in_staging_or_production(environment):
+    for key_id, key in KEYS.items():
+        with pytest.raises(ledger.LedgerError) as refused:
+            _make_entry(key, key_id, environment)
+        assert refused.value.code == "test_key"
+
+
+@pytest.mark.parametrize("environment", ("development", "test"))
+def test_sig10_the_published_test_keys_can_sign_only_in_development_or_tests(environment):
+    for key_id, key in KEYS.items():
+        entry = _make_entry(key, key_id, environment)
+        assert ledger.verify_entry(entry.to_json(), entry.object_name, {key_id: PUBLIC[key_id]}) == entry
+
+
+@pytest.mark.parametrize("environment", ("preview", "", None))
+def test_signing_rejects_unknown_or_missing_environment(environment):
+    with pytest.raises(ledger.LedgerError) as refused:
+        _make_entry(KEYS["test-1"], "test-1", environment)
+    assert refused.value.code == "bad_environment"
+
+
+def test_signing_rejects_an_omitted_environment():
+    template = ledger.parse_entry(VECTORS["valid"][0]["json"].encode())
+    with pytest.raises(ledger.LedgerError) as refused:
+        ledger.make_entry(KEYS["test-1"], "test-1", template.entity_type, template.entity_id, template.user_id,
+                          template.deleted_at, entry_id=template.entry_id)
+    assert refused.value.code == "bad_environment"
+
+
+@pytest.mark.parametrize("environment", ("staging", "production"))
+def test_non_test_key_can_sign_in_staging_and_production(environment):
+    key = Ed25519PrivateKey.generate()
+    entry = _make_entry(key, "runtime-key", environment)
+    assert ledger.verify_entry(entry.to_json(), entry.object_name, {"runtime-key": key.public_key()}) == entry
+
+
+def test_sig10_direct_guard_also_rejects_the_published_test_keys():
     for environment in ("staging", "production"):
         for key in KEYS.values():
             with pytest.raises(ledger.LedgerError) as refused:
                 ledger.check_signing_key_allowed(environment, key)
             assert refused.value.code == "test_key"
-        ledger.check_signing_key_allowed(environment, Ed25519PrivateKey.generate())  # a real key is fine
-    for environment in ("development", "test"):
-        for key in KEYS.values():
-            ledger.check_signing_key_allowed(environment, key)
 
 
 @pytest.mark.parametrize("spec", [
@@ -140,13 +183,17 @@ def test_signing_keys_are_checked(seed):
 def test_make_entry_formats_time_and_refuses_bad_values():
     key = KEYS["test-1"]
     moment = datetime(2026, 11, 25, 11, 14, 3, 120458, tzinfo=timezone(timedelta(hours=2)))
-    entry = ledger.make_entry(key, "test-1", "photo", str(uuid.uuid4()), str(uuid.uuid4()), moment)
+    entry = ledger.make_entry(key, "test-1", "photo", str(uuid.uuid4()), str(uuid.uuid4()), moment,
+                              environment="test")
     assert entry.deleted_at == "2026-11-25T09:14:03.120458Z"
     assert entry.object_name == f"2026/11/25/{entry.entry_id}.json"
     assert ledger.verify_entry(entry.to_json(), entry.object_name, PUBLIC) == entry
     with pytest.raises(ValueError):
-        ledger.make_entry(key, "test-1", "photo", str(uuid.uuid4()), str(uuid.uuid4()), datetime(2026, 11, 25))
+        ledger.make_entry(key, "test-1", "photo", str(uuid.uuid4()), str(uuid.uuid4()), datetime(2026, 11, 25),
+                          environment="test")
     with pytest.raises(ledger.LedgerError):
-        ledger.make_entry(key, "test-1", "profile", str(uuid.uuid4()), str(uuid.uuid4()), moment)
+        ledger.make_entry(key, "test-1", "profile", str(uuid.uuid4()), str(uuid.uuid4()), moment,
+                          environment="test")
     with pytest.raises(ledger.LedgerError):
-        ledger.make_entry(key, "test-1", "item", str(uuid.uuid4()).upper(), str(uuid.uuid4()), moment)
+        ledger.make_entry(key, "test-1", "item", str(uuid.uuid4()).upper(), str(uuid.uuid4()), moment,
+                          environment="test")
