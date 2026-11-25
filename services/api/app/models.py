@@ -193,3 +193,19 @@ class RateLimitEvent(Base):
     # The email the event is about, so a password reset can clear every limit for that email.
     subject_hash: Mapped[str] = mapped_column(String(64), index=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DeletionIntent(Base):
+    """A deletion the server has started (plan 4.10.1د): written and committed before the ledger
+    entry, removed in the same transaction as the deletion. One left behind means the entry may
+    exist but the deletion did not commit: the reconciliation job completes it from the signed
+    entry and this row together. entry_id is the ledger entry's own id. No foreign keys: the
+    entity is about to go."""
+
+    __tablename__ = "deletion_intents"
+
+    entry_id: Mapped[str] = mapped_column(_ID, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(10))
+    entity_id: Mapped[str] = mapped_column(_ID)
+    user_id: Mapped[str] = mapped_column(_ID)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

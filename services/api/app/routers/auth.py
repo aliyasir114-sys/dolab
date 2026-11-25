@@ -40,6 +40,7 @@ from ..schemas import (
 )
 from .. import export
 from ..export import export_payload
+from ..deletion import delete_with_ledger
 from ..services import delete_photo_files
 from ..storage import StorageUnavailable
 from ..security import create_token, hash_password, new_secret_token, token_hash, verify_password
@@ -294,20 +295,25 @@ def export_zip(user: CurrentUser, db: Db) -> FileResponse:
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(user: CurrentUser, db: Db) -> Response:
-    """Delete the account and everything it owns, including photo files (PRD A6)."""
+    """Delete the account and everything it owns, including photo files (PRD A6). One "user"
+    ledger entry covers all of it, written and confirmed before anything is deleted."""
     photos = list(db.scalars(select(ItemPhoto).where(ItemPhoto.user_id == user.id)))
-    db.execute(delete(ItemPhoto).where(ItemPhoto.user_id == user.id))
-    donation_ids = select(Donation.id).where(Donation.user_id == user.id)
-    db.execute(delete(DonationItem).where(DonationItem.donation_id.in_(donation_ids)))
-    db.execute(delete(Donation).where(Donation.user_id == user.id))
-    db.execute(delete(WearLog).where(WearLog.user_id == user.id))
-    db.execute(delete(ItemStatusChange).where(ItemStatusChange.user_id == user.id))
-    db.execute(delete(Item).where(Item.user_id == user.id))
-    db.execute(delete(Profile).where(Profile.user_id == user.id))
-    db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
-    db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user.id))
-    db.execute(delete(User).where(User.id == user.id))
-    db.commit()
+    user_id = user.id
+
+    def apply(session) -> None:
+        session.execute(delete(ItemPhoto).where(ItemPhoto.user_id == user_id))
+        donation_ids = select(Donation.id).where(Donation.user_id == user_id)
+        session.execute(delete(DonationItem).where(DonationItem.donation_id.in_(donation_ids)))
+        session.execute(delete(Donation).where(Donation.user_id == user_id))
+        session.execute(delete(WearLog).where(WearLog.user_id == user_id))
+        session.execute(delete(ItemStatusChange).where(ItemStatusChange.user_id == user_id))
+        session.execute(delete(Item).where(Item.user_id == user_id))
+        session.execute(delete(Profile).where(Profile.user_id == user_id))
+        session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+        session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+        session.execute(delete(User).where(User.id == user_id))
+
+    delete_with_ledger(db, "user", user_id, user_id, apply)
     delete_photo_files(photos)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -331,7 +337,11 @@ def put_profile(body: ProfileBody, user: CurrentUser, db: Db) -> Profile:
 
 @router.delete("/me/profile", status_code=status.HTTP_204_NO_CONTENT)
 def delete_profile(user: CurrentUser, db: Db) -> Response:
-    """Remove all body details. They are optional and can be withdrawn at any time."""
+    """Remove all body details. They are optional and can be withdrawn at any time.
+
+    Not yet protected by the deletion ledger: format v1 has no "profile" entity, so restoring a
+    backup could bring the measurements back. A format v2 with "profile" is a separate request
+    (Ali's decision 2026-11-25); until then the deletion guarantee is not complete."""
     db.execute(delete(Profile).where(Profile.user_id == user.id))
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

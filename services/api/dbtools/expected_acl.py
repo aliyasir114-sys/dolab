@@ -54,6 +54,8 @@ TABLES = {
     "donation_items": {APP: _APPEND},
     # Migration 0003: counted, recorded, cleared and purged; never edited.
     "rate_limit_events": {APP: _APPEND},
+    # Migration 0004: recorded, looked up and removed; never edited.
+    "deletion_intents": {APP: _APPEND},
     # Migration bookkeeping: owner only.
     "alembic_version": {},
 }
