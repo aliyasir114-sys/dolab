@@ -22,6 +22,10 @@ log = logging.getLogger("dolab.ledger")
 
 ATTEMPTS = 3
 BUDGET_SECONDS = 2.0
+# Leave room for non-socket work between the bounded S3 call and the deadline.
+DEADLINE_SAFETY_SECONDS = 0.05
+CONNECT_TIMEOUT_SECONDS = 0.5
+READ_TIMEOUT_SECONDS = 1.0
 
 
 class LedgerUnavailable(RuntimeError):
@@ -65,26 +69,36 @@ class S3Ledger:
     """The ledger bucket. Short timeouts and no client retries: write_entry keeps the budget."""
 
     def __init__(self, bucket: str, *, endpoint_url: str | None = None, region: str = "us-east-1",
-                 encryption: str | None = "AES256", client=None) -> None:
+                 encryption: str | None = "AES256") -> None:
         self.bucket, self.encryption = bucket, encryption
-        if client is None:
-            import boto3
-            from botocore.config import Config
-
-            client = boto3.client(
-                "s3", endpoint_url=endpoint_url, region_name=region,
-                config=Config(connect_timeout=0.5, read_timeout=1.0, retries={"total_max_attempts": 1},
-                              s3={"addressing_style": "path"} if endpoint_url else {}),
-            )
-        self.client = client
+        self.endpoint_url, self.region = endpoint_url, region
 
     def put(self, name: str, body: bytes) -> None:
+        self.put_with_timeout(name, body, CONNECT_TIMEOUT_SECONDS + READ_TIMEOUT_SECONDS)
+
+    def put_with_timeout(self, name: str, body: bytes, timeout: float) -> None:
         from botocore.exceptions import BotoCoreError, ClientError
 
-        extra = {"ServerSideEncryption": self.encryption} if self.encryption else {}
+        if timeout <= 0:
+            raise LedgerUnavailable("ledger write deadline exceeded")
+        import boto3
+        from botocore.config import Config
+
+        half_timeout = timeout / 2
+        client = None
         try:
-            self.client.put_object(Bucket=self.bucket, Key=name, Body=body, ContentType="application/json",
-                                   IfNoneMatch="*", **extra)
+            client = boto3.client(
+                "s3", endpoint_url=self.endpoint_url, region_name=self.region,
+                config=Config(
+                    connect_timeout=min(CONNECT_TIMEOUT_SECONDS, half_timeout),
+                    read_timeout=min(READ_TIMEOUT_SECONDS, half_timeout),
+                    retries={"total_max_attempts": 1},
+                    s3={"addressing_style": "path"} if self.endpoint_url else {},
+                ),
+            )
+            extra = {"ServerSideEncryption": self.encryption} if self.encryption else {}
+            client.put_object(Bucket=self.bucket, Key=name, Body=body, ContentType="application/json",
+                              IfNoneMatch="*", **extra)
         except ClientError as error:
             code = str(error.response.get("Error", {}).get("Code", ""))
             if code in ("PreconditionFailed", "412", "ConditionalRequestConflict"):
@@ -92,6 +106,9 @@ class S3Ledger:
             raise LedgerUnavailable(f"ledger write failed: {code}") from error
         except BotoCoreError as error:
             raise LedgerUnavailable(f"ledger write failed: {type(error).__name__}") from error
+        finally:
+            if client is not None:
+                client.close()
 
 
 def write_entry(writer: LedgerWriter, entry: Entry, *, attempts: int = ATTEMPTS,
@@ -99,17 +116,29 @@ def write_entry(writer: LedgerWriter, entry: Entry, *, attempts: int = ATTEMPTS,
     """Write one entry and wait for the confirmation; raises LedgerUnavailable if it cannot."""
     deadline = time.monotonic() + budget
     body, name = entry.to_json(), entry.object_name
+    last_error = None
     for attempt in range(1, attempts + 1):
+        remaining = deadline - time.monotonic()
+        timeout = remaining - DEADLINE_SAFETY_SECONDS
+        if timeout <= 0:
+            error = last_error or LedgerUnavailable("ledger write deadline exceeded")
+            log.error("ALERT deletion ledger deadline exceeded after %d attempt(s): %s", attempt - 1, error)
+            raise error
         try:
-            writer.put(name, body)
+            put_with_timeout = getattr(writer, "put_with_timeout", None)
+            if put_with_timeout:
+                put_with_timeout(name, body, timeout)
+            else:
+                writer.put(name, body)
             return
         except LedgerEntryExists:
             log.error("ALERT deletion ledger entry already exists: %s", name)
             raise  # never retried: an entry is written once
         except LedgerUnavailable as error:
+            last_error = error
             left = deadline - time.monotonic()
             pause = 0.1 * attempt
-            if attempt == attempts or left <= pause:
+            if attempt == attempts or left <= pause + DEADLINE_SAFETY_SECONDS:
                 log.error("ALERT deletion ledger unavailable after %d attempt(s): %s", attempt, error)
                 raise
             log.warning("deletion ledger write failed (attempt %d): %s", attempt, error)

@@ -150,44 +150,67 @@ def _real_ledger_key() -> str:
     return base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
 
 
-# Production also needs a (real, not published) ledger key and a ledger bucket of its own.
+# Staging and production also need a (real, not published) ledger key and a ledger bucket of its own.
 PRODUCTION_LEDGER = {"DOLAB_LEDGER_SIGNING_KEY": _real_ledger_key(), "DOLAB_LEDGER_KEY_ID": "prod-1",
                      "DOLAB_LEDGER_BUCKET": "dolab-ledger"}
 
 
 def _load(env: dict[str, str]) -> subprocess.CompletedProcess:
-    full = {k: v for k, v in os.environ.items()
-            if not k.startswith(("DOLAB_S3", "DOLAB_STORAGE", "DOLAB_ENV", "DOLAB_LEDGER"))}
+    full = {k: v for k, v in os.environ.items() if not k.startswith("DOLAB_")}
     full.update(env)
     code = "from app.config import settings as s; print(s.storage, s.s3_bucket, s.s3_encryption, s.s3_endpoint_url)"
     return subprocess.run([sys.executable, "-c", code], cwd=API_DIR, env=full, capture_output=True, text=True)
 
 
-def test_storage_settings_are_checked():
-    production = {"DOLAB_ENV": "production", "DOLAB_JWT_SECRET": "x" * 40,
-                  "DOLAB_DATABASE_URL": "postgresql+psycopg://u:p@localhost/dolab", **PRODUCTION_LEDGER}
-    assert "must be 's3' in production" in _load(production).stderr
-    assert "DOLAB_S3_BUCKET" in _load({**production, "DOLAB_STORAGE": "s3"}).stderr
-    no_encryption = _load({**production, "DOLAB_STORAGE": "s3", "DOLAB_S3_BUCKET": "b", "DOLAB_S3_ENCRYPTION": "none"})
-    assert "cannot be 'none' in production" in no_encryption.stderr
-    good = _load({**production, "DOLAB_STORAGE": "s3", "DOLAB_S3_BUCKET": "b"})
+def _strict_storage(environment: str) -> dict[str, str]:
+    return {
+        "DOLAB_ENV": environment,
+        "DOLAB_JWT_SECRET": "x" * 40,
+        "DOLAB_DATABASE_URL": "postgresql+psycopg://u:p@localhost/dolab",
+        "DOLAB_STORAGE": "s3",
+        "DOLAB_S3_BUCKET": "photos",
+        "DOLAB_S3_ENDPOINT_URL": "https://s3.example.test",
+        **PRODUCTION_LEDGER,
+    }
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_storage_settings_are_checked(environment):
+    strict = _strict_storage(environment)
+    assert f"must be 's3' in {environment}" in _load({**strict, "DOLAB_STORAGE": "local"}).stderr
+    assert "DOLAB_S3_BUCKET" in _load({**strict, "DOLAB_S3_BUCKET": ""}).stderr
+    no_encryption = _load({**strict, "DOLAB_S3_ENCRYPTION": "none"})
+    assert f"cannot be 'none' in {environment}" in no_encryption.stderr
+    good = _load(strict)
     assert good.returncode == 0, good.stderr
-    assert good.stdout.split() == ["s3", "b", "AES256", "None"]  # encrypted and AWS default when endpoint is unset
+    assert good.stdout.split() == ["s3", "photos", "AES256", "https://s3.example.test"]
     assert "DOLAB_STORAGE must be" in _load({"DOLAB_STORAGE": "ftp"}).stderr
     assert _load({}).stdout.split()[0] == "local"
 
 
-def test_s3_endpoint_https_is_required_only_in_production():
-    production = {"DOLAB_ENV": "production", "DOLAB_JWT_SECRET": "x" * 40,
-                  "DOLAB_DATABASE_URL": "postgresql+psycopg://u:p@localhost/dolab",
-                  "DOLAB_STORAGE": "s3", "DOLAB_S3_BUCKET": "b", **PRODUCTION_LEDGER}
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_s3_endpoint_https_is_required_in_strict_environments(environment):
+    strict = _strict_storage(environment)
+    http = _load({**strict, "DOLAB_S3_ENDPOINT_URL": "http://s3.example.test"})
+    assert f"DOLAB_S3_ENDPOINT_URL must use https:// in {environment}" in http.stderr
 
-    http = _load({**production, "DOLAB_S3_ENDPOINT_URL": "http://s3.example.test"})
-    assert "DOLAB_S3_ENDPOINT_URL must use https:// in production" in http.stderr
-
-    https = _load({**production, "DOLAB_S3_ENDPOINT_URL": "https://s3.example.test"})
+    https = _load(strict)
     assert https.returncode == 0, https.stderr
     assert https.stdout.split()[-1] == "https://s3.example.test"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("case", ["missing-jwt", "sqlite"])
+def test_strict_environments_require_jwt_and_postgres(environment, case):
+    strict = _strict_storage(environment)
+    env, expected = {
+        "missing-jwt": ({**strict, "DOLAB_JWT_SECRET": ""}, f"DOLAB_JWT_SECRET must be set in {environment}"),
+        "sqlite": ({**strict, "DOLAB_DATABASE_URL": "sqlite:///./unused.db"},
+                   f"DOLAB_DATABASE_URL must be PostgreSQL in {environment}"),
+    }[case]
+    result = _load(env)
+    assert result.returncode != 0
+    assert expected in result.stderr
 
 
 @pytest.mark.parametrize("environment", ["test", "development"])

@@ -56,14 +56,15 @@ def load_settings() -> Settings:
     environment = os.getenv("DOLAB_ENV", "development")
     if environment not in ENVIRONMENTS:
         raise RuntimeError(f"DOLAB_ENV must be one of {', '.join(ENVIRONMENTS)}; got {environment!r}")
+    strict = environment in ("staging", "production")
     secret = os.getenv("DOLAB_JWT_SECRET", "")
     if not secret:
-        if environment == "production":
-            raise RuntimeError("DOLAB_JWT_SECRET must be set in production")
+        if strict:
+            raise RuntimeError(f"DOLAB_JWT_SECRET must be set in {environment}")
         secret = _DEV_SECRET
     database_url = os.getenv("DOLAB_DATABASE_URL", "sqlite:///./dolab.db")
-    if environment == "production" and not database_url.startswith("postgresql"):
-        raise RuntimeError("DOLAB_DATABASE_URL must be PostgreSQL in production")
+    if strict and not database_url.startswith("postgresql"):
+        raise RuntimeError(f"DOLAB_DATABASE_URL must be PostgreSQL in {environment}")
     return Settings(
         environment=environment,
         database_url=database_url,
@@ -139,25 +140,26 @@ def _positive_int(name: str, default: int) -> int:
 
 
 def _storage_settings(environment: str) -> dict:
+    strict = environment in ("staging", "production")
     backend = os.getenv("DOLAB_STORAGE", "local")
     if backend not in ("local", "s3"):
         raise RuntimeError("DOLAB_STORAGE must be 'local' or 's3'")
-    if environment == "production" and backend != "s3":
+    if strict and backend != "s3":
         # Several server instances do not share a disk, and a container's disk does not last.
-        raise RuntimeError("DOLAB_STORAGE must be 's3' in production")
+        raise RuntimeError(f"DOLAB_STORAGE must be 's3' in {environment}")
     bucket = os.getenv("DOLAB_S3_BUCKET", "")
     if backend == "s3" and not bucket:
         raise RuntimeError("DOLAB_S3_BUCKET must be set when DOLAB_STORAGE is 's3'")
     encryption = os.getenv("DOLAB_S3_ENCRYPTION", "AES256")
     if encryption not in ("AES256", "aws:kms", "none"):
         raise RuntimeError("DOLAB_S3_ENCRYPTION must be 'AES256', 'aws:kms' or 'none'")
-    if environment == "production" and encryption == "none":
-        raise RuntimeError("DOLAB_S3_ENCRYPTION cannot be 'none' in production")
+    if strict and encryption == "none":
+        raise RuntimeError(f"DOLAB_S3_ENCRYPTION cannot be 'none' in {environment}")
     endpoint_url = os.getenv("DOLAB_S3_ENDPOINT_URL") or None
-    if environment == "production" and endpoint_url:
+    if strict and endpoint_url:
         parsed = urlparse(endpoint_url)
         if parsed.scheme != "https" or not parsed.hostname:
-            raise RuntimeError("DOLAB_S3_ENDPOINT_URL must use https:// in production")
+            raise RuntimeError(f"DOLAB_S3_ENDPOINT_URL must use https:// in {environment}")
     return {
         "storage": backend,
         "s3_bucket": bucket,

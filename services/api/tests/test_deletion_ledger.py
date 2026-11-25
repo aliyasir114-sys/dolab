@@ -233,8 +233,58 @@ def test_writing_gives_up_within_two_seconds():
     started = time.monotonic()
     with pytest.raises(ledger_store.LedgerUnavailable):
         ledger_store.write_entry(Slow(), entry)
-    assert time.monotonic() - started < 2.3
+    assert time.monotonic() - started < ledger_store.BUDGET_SECONDS
     assert Slow.calls == 2  # a third try would not fit in the budget
+
+
+def test_s3_timeouts_obey_deadline_and_failure_preserves_item(client, signup, monkeypatch):
+    import boto3
+    from botocore.exceptions import ClientError
+
+    headers = signup()
+    item_id = new_item(client, headers)
+    configs = []
+
+    def make_client(_service, *, endpoint_url, region_name, config):
+        configs.append(config)
+
+        class DelayedS3:
+            def put_object(self, **_kwargs):
+                time.sleep(config.connect_timeout + config.read_timeout)
+                raise ClientError({"Error": {"Code": "SlowDown", "Message": "timed out"}}, "PutObject")
+
+            def close(self):
+                pass
+
+        return DelayedS3()
+
+    monkeypatch.setattr(boto3, "client", make_client)
+    monkeypatch.setattr(
+        ledger_store,
+        "writer",
+        ledger_store.S3Ledger("ledger", endpoint_url="https://s3.example.test"),
+    )
+    durations = []
+    real_write_entry = ledger_store.write_entry
+
+    def timed_write_entry(*args, **kwargs):
+        started = time.monotonic()
+        try:
+            return real_write_entry(*args, **kwargs)
+        finally:
+            durations.append(time.monotonic() - started)
+
+    monkeypatch.setattr(ledger_store, "write_entry", timed_write_entry)
+    response = client.delete(f"/items/{item_id}", headers=headers)
+
+    assert response.status_code == 503
+    assert durations and durations[0] < ledger_store.BUDGET_SECONDS
+    assert len(configs) == 2
+    assert all(config.retries["total_max_attempts"] == 1 for config in configs)
+    assert configs[1].connect_timeout < configs[0].connect_timeout
+    assert configs[1].read_timeout < configs[0].read_timeout
+    assert count(Item, id=item_id) == 1
+    assert intents() == []
 
 
 def test_an_entry_is_never_replaced(client, tmp_path):
