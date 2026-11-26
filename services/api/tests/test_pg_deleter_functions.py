@@ -24,6 +24,7 @@ from tests.test_photos import new_item, upload
 
 APPLY = "dolab.apply_deletion(text,uuid,uuid)"
 RECONCILE = "dolab.reconcile_apply(uuid,text,uuid,uuid,boolean)"
+PURGE = "dolab.reconcile_purge_intents(boolean)"
 RECORD = ("dolab.reconcile_record_run(timestamp with time zone,timestamp with time zone,integer,integer,integer,"
           "integer,integer,integer,integer,integer,integer)")
 STATE_TABLES = ("users", "profiles", "items", "item_photos", "wear_logs", "item_status_changes", "donations",
@@ -111,7 +112,7 @@ def test_db2_the_reconciler_cannot_create_switch_or_alter():
 
 def test_db3_the_functions_are_locked_down():
     with connect() as admin:
-        for function in (APPLY, RECONCILE, RECORD):
+        for function in (APPLY, RECONCILE, RECORD, PURGE):
             owner, definer, config = rows(admin, "SELECT pg_get_userbyid(proowner), prosecdef, proconfig "
                                                  "FROM pg_proc WHERE oid = %s::regprocedure", function)[0]
             assert owner == E.DELETER and definer is True, function
@@ -121,7 +122,7 @@ def test_db3_the_functions_are_locked_down():
 
 
 def test_db4_who_may_run_what():
-    expected = {E.RECONCILER: {RECONCILE, RECORD}, E.APP: {APPLY}, E.DEPLOY: set()}
+    expected = {E.RECONCILER: {RECONCILE, RECORD, PURGE}, E.APP: {APPLY}, E.DEPLOY: set()}
     with connect() as admin:
         functions = [f for (f,) in rows(admin, "SELECT p.oid::regprocedure::text FROM pg_proc p "
                                                "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dolab'")]
@@ -134,6 +135,7 @@ def test_the_api_cannot_reconcile_or_read_the_audit_log():
     with connect(E.APP) as conn:
         assert denied(conn, "SELECT dolab.reconcile_apply(gen_random_uuid(), 'item', gen_random_uuid(), "
                             "gen_random_uuid(), true)")
+        assert denied(conn, "SELECT dolab.reconcile_purge_intents(true)")
         assert denied(conn, "SELECT 1 FROM dolab.audit_log")
         assert denied(conn, "SELECT 1 FROM dolab.reconciled_entries")
 
@@ -271,10 +273,20 @@ def test_a_run_is_recorded_with_counts_only(db_client):
                 conn.execute(bad, (started,))
     with connect() as admin:
         ((actor, action, outcome, counts),) = rows(admin, "SELECT actor, action, outcome, counts FROM dolab.audit_log")
-    assert (actor, action, outcome) == ("reconciler", "reconcile.run", "recorded")
+    # An invalid entry makes the run a failed one (migration 0006, Ali 2026-11-26).
+    assert (actor, action, outcome) == ("reconciler", "reconcile.run", "failed")
     assert {k: v for k, v in counts.items() if k not in ("started", "finished")} == {
         "read": 10, "valid": 9, "bad_signature": 1, "deleted": 3, "already_done": 2, "absent": 1,
         "no_intent": 2, "owner_mismatch": 0, "errors": 0}
+
+
+@pytest.mark.parametrize("bad, errors_, expected", [(0, 0, "recorded"), (1, 0, "failed"), (0, 1, "failed")])
+def test_a_run_with_problems_is_recorded_as_failed(db_client, bad, errors_, expected):
+    with connect(E.RECONCILER) as conn:
+        conn.execute("SELECT dolab.reconcile_record_run(now() - interval '1 minute', now(), 1, 1, %s, 0, 0, 0, 0, 0, %s)",
+                     (bad, errors_))
+    with connect() as admin:
+        assert rows(admin, "SELECT outcome FROM dolab.audit_log") == [(expected,)]
 
 
 # ------------------------------------------------------------------ parity: Python (SQLite) and PostgreSQL

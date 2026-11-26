@@ -88,13 +88,15 @@ COLUMNS: dict[tuple[str, str], dict[str, set[str]]] = {
 COLUMNS[("users", "updated_at")] = {DELETER: {"UPDATE"}}
 
 # Sequences, functions and standalone types in dolab. Functions: the deleter functions of
-# migration 0005, owned by dolab_deleter; nobody else may run them.
+# migrations 0005 and 0006, owned by dolab_deleter; nobody else may run them.
 SEQUENCES: dict[str, dict[str, set[str]]] = {}
 FUNCTIONS: dict[str, dict[str, set[str]]] = {
     "dolab.apply_deletion(text,uuid,uuid)": {APP: {"EXECUTE"}},
     "dolab.reconcile_apply(uuid,text,uuid,uuid,boolean)": {RECONCILER: {"EXECUTE"}},
     "dolab.reconcile_record_run(timestamp with time zone,timestamp with time zone,integer,integer,integer,"
     "integer,integer,integer,integer,integer,integer)": {RECONCILER: {"EXECUTE"}},
+    # Migration 0006 (notice #57).
+    "dolab.reconcile_purge_intents(boolean)": {RECONCILER: {"EXECUTE"}},
 }
 TYPES: dict[str, dict[str, set[str]]] = {}
 
