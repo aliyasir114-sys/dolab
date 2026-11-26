@@ -174,23 +174,18 @@ def test_if_the_intent_cannot_be_removed_either_still_nothing_is_deleted(client,
 
 
 def test_if_the_deletion_fails_after_the_entry_both_entry_and_intent_remain(client, signup, monkeypatch):
-    # The reverse case: entry written, deletion not committed. The reconciliation job (next part)
-    # completes it from the signed entry and the matching intent.
+    # The reverse case: entry written, deletion not committed. dolab.reconcile_apply completes it
+    # from the matching intent (test_pg_deleter_functions.py).
     headers = signup()
     item_id = new_item(client, headers)
     before = entries()
-    real = deletion.delete_with_ledger
+    real = deletion.apply_deletion
 
-    def failing_apply(db, entity_type, entity_id, user_id, apply):
-        def apply_then_fail(session):
-            apply(session)
-            raise RuntimeError("connection lost before commit")
+    def apply_then_fail(db, *args):
+        real(db, *args)
+        raise RuntimeError("connection lost before commit")
 
-        return real(db, entity_type, entity_id, user_id, apply_then_fail)
-
-    from app.routers import items as items_router
-
-    monkeypatch.setattr(items_router, "delete_with_ledger", failing_apply)
+    monkeypatch.setattr(deletion, "apply_deletion", apply_then_fail)
     with pytest.raises(RuntimeError):
         client.delete(f"/items/{item_id}", headers=headers)
     (entry,) = new_entries(before)
