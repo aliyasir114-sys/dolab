@@ -92,6 +92,9 @@ jobs:
       AWS_ACCESS_KEY_ID: dolab-ci
       AWS_SECRET_ACCESS_KEY: ci-minio-not-a-secret
       AWS_DEFAULT_REGION: us-east-1
+      # The reconciliation job's read-only ledger user (throwaway, CI MinIO only).
+      DOLAB_TEST_LEDGER_READER_KEY: dolab-ci-ledger-reader
+      DOLAB_TEST_LEDGER_READER_SECRET: ci-reader-not-a-secret
     defaults:
       run:
         working-directory: services/api
@@ -115,6 +118,33 @@ jobs:
           curl -fsS http://localhost:9000/minio/health/live
           docker image inspect cgr.dev/chainguard/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
           python -c "import boto3; c = boto3.client('s3', endpoint_url='http://localhost:9000'); c.create_bucket(Bucket='dolab-ci'); c.create_bucket(Bucket='dolab-ci-ledger')"
+      - name: Read-only ledger identity for the reconciliation job (mc, CI only)
+        env:
+          # Chainguard's build of the MinIO client: the same supplier as the MinIO server above.
+          # Pinned by digest (the image whose signature was first verified in CI on 2026-11-26);
+          # its signature is still checked on every run. To update: take the new digest from a
+          # verified run and change it here in a reviewed pull request.
+          # Known limit (review of #58): the cosign image is pinned by digest, so it cannot change
+          # unnoticed, but where that digest came from was not checked independently (it is the
+          # one cgr.dev served on 2026-11-26). CI only; never used outside this job.
+          MC_IMAGE: cgr.dev/chainguard/minio-client@sha256:fac83a05890847b4af12e406018088d54f16f1d53e6e39cb68e56591be6e5b3a
+          COSIGN_IMAGE: cgr.dev/chainguard/cosign@sha256:bfc3e068b714f251042d6c1b2fe5f1c3ee8e577d3d36271ae62be5f3a00cc185
+        run: |
+          docker pull -q "$MC_IMAGE" && docker pull -q "$COSIGN_IMAGE"
+          # Chainguard signs its images in its public release workflow (Sigstore, keyless).
+          docker run --rm "$COSIGN_IMAGE" verify "$MC_IMAGE" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity=https://github.com/chainguard-images/images/.github/workflows/release.yaml@refs/heads/main \
+            > /dev/null
+          echo "mc image signature verified"
+          mc() {
+            docker run --rm --network host -v "$PWD/ops:/ops:ro" \
+              -e MC_HOST_ci="http://$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY@localhost:9000" \
+              "$MC_IMAGE" --config-dir /tmp/mc "$@"
+          }
+          mc admin user add ci "$DOLAB_TEST_LEDGER_READER_KEY" "$DOLAB_TEST_LEDGER_READER_SECRET"
+          mc admin policy create ci dolab-ledger-read /ops/ledger-reader-policy.json
+          mc admin policy attach ci dolab-ledger-read --user "$DOLAB_TEST_LEDGER_READER_KEY"
       - run: pytest -q -rs
       - name: MinIO log
         if: failure()
