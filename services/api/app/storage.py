@@ -11,7 +11,6 @@ links, which cannot be revoked when a photo is deleted (decision 19). Uploads st
 through the API, which checks the file and strips its metadata first.
 """
 import logging
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,25 +18,14 @@ from pathlib import Path
 from typing import Protocol
 
 from .config import Settings, settings
+from .storage_keys import StorageUnavailable, check_key  # noqa: F401 - re-exported
 
 log = logging.getLogger("dolab.storage")
 
-# Keys are made by the server ("<user id>/<photo id>_original.jpg"); anything else is refused.
-_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
 
 
 # Large reads (the ZIP export) go through read_chunks in blocks of this size, never whole.
 CHUNK = 1024 * 1024
-
-
-class StorageUnavailable(RuntimeError):
-    """The storage could not be reached or refused the request. Callers answer 503 or retry later."""
-
-
-def check_key(key: str) -> str:
-    if len(key) > 512 or not _KEY.match(key) or ".." in key.split("/"):
-        raise ValueError("invalid storage key")
-    return key
 
 
 @dataclass(frozen=True)

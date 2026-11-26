@@ -28,7 +28,7 @@ PURGE = "dolab.reconcile_purge_intents(boolean)"
 RECORD = ("dolab.reconcile_record_run(timestamp with time zone,timestamp with time zone,integer,integer,integer,"
           "integer,integer,integer,integer,integer,integer)")
 STATE_TABLES = ("users", "profiles", "items", "item_photos", "wear_logs", "item_status_changes", "donations",
-                "donation_items", "refresh_tokens", "password_reset_tokens", "deletion_intents",
+                "donation_items", "refresh_tokens", "password_reset_tokens", "pending_file_deletions", "deletion_intents",
                 "reconciled_entries", "audit_log")
 
 
@@ -293,22 +293,32 @@ def test_a_run_with_problems_is_recorded_as_failed(db_client, bad, mismatch, err
 # ------------------------------------------------------------------ parity: Python (SQLite) and PostgreSQL
 
 @pytest.mark.parametrize("what", ["item", "photo", "user"])
-def test_the_python_and_postgresql_deletions_do_the_same(db_client, signup, what):
-    """Both logics on the same data: the same rows left in every table, the same file keys."""
+def test_the_python_and_postgresql_deletions_do_the_same(db_client, signup, monkeypatch, what):
+    """Both logics on the same data: the same rows left in every table, the same file keys, and
+    the same files queued (migration 0007). The API role may not write the queue on PostgreSQL,
+    so the Python twin's one queue statement is recorded here; the SQLite tests run it for real."""
     _, user_id, item_id, photo_id = wardrobe(db_client, signup)
     wardrobe(db_client, signup, "other@example.com")
     entity = {"item": item_id, "photo": photo_id, "user": user_id}[what]
+    python_queued: list[str] = []
+    monkeypatch.setattr(deletion, "_queue_files", lambda db, keys: python_queued.extend(keys))
     results = {}
     for name, logic in (("python", deletion.python_deletion), ("postgresql", deletion.function_deletion)):
         with SessionLocal() as db:
             keys = logic(db, what, entity, user_id)
             snapshot = {}
             for table in STATE_TABLES[:-3]:  # what the API role can read
+                if table == "pending_file_deletions":
+                    continue  # the API reads the key only: compared below
                 snapshot[table] = sorted(map(tuple, db.execute(text(f"SELECT * FROM dolab.{table}")).all()), key=repr)
+            queue = sorted(db.scalars(text("SELECT key FROM dolab.pending_file_deletions")))
             db.rollback()
-        results[name] = (sorted(keys), snapshot)
+        results[name] = (sorted(keys), snapshot, queue)
     assert results["python"][0] and results["python"][0] == results["postgresql"][0]
     assert results["python"][1] == results["postgresql"][1]
+    assert results["python"][2] == []  # recorded instead, as above
+    assert sorted(python_queued) == results["postgresql"][2] == results["postgresql"][0]
+    assert len(set(results["postgresql"][0])) == len(results["postgresql"][0])  # each key once
 
 
 def test_both_logics_refuse_someone_elses_entity(db_client, signup):

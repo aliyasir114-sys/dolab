@@ -298,7 +298,7 @@ def delete_account(user: CurrentUser, db: Db) -> Response:
     """Delete the account and everything it owns, including photo files (PRD A6). One "user"
     ledger entry covers all of it, written and confirmed before anything is deleted."""
     user_id = user.id
-    delete_file_keys(delete_with_ledger(db, "user", user_id, user_id))
+    delete_file_keys(db, delete_with_ledger(db, "user", user_id, user_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

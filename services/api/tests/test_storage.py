@@ -138,7 +138,7 @@ def test_a_failed_file_delete_does_not_fail_the_users_delete(client, signup, mon
     assert client.get(f"/items/{item_id}/photos", headers=headers).json() == []
     # The old link stops working at once, because the record is gone.
     assert client.get(photo["url"].removeprefix("/v1")).status_code == 404
-    assert "left in storage" in caplog.text
+    assert "left for the file deletion queue" in caplog.text
     assert delete_photo_files([]) is None
 
 

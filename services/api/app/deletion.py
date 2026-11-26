@@ -20,6 +20,10 @@ SQLite (development and tests only, no PL/pgSQL) the same statements in Python b
 PostgreSQL runs both on the same data and compares every affected table and the file keys
 (tests/test_pg_deleter_functions.py), so they cannot drift apart.
 
+Step 4 also queues the photo files in pending_file_deletions, in the same transaction (plan
+4.10.3, notice #59). Step 5 then deletes them from storage, only after the commit, and removes
+their rows; a file it could not delete keeps its row for the queue job (app.jobs.file_deletions).
+
 Not covered yet: DELETE /me/profile (clearing body measurements) writes no entry, because format
 v1 knows only item, photo and user. Until "profile" is added in a format v2 (a separate request,
 Ali's decision 2026-11-25), a restored backup can bring cleared measurements back; the deletion
@@ -30,14 +34,15 @@ import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from . import clock, ledger, ledger_store
 from .config import settings
 from .db import SessionLocal, is_sqlite
 from .models import (
-    DeletionIntent, Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, PasswordResetToken, Profile,
-    RefreshToken, User, WearLog,
+    DeletionIntent, Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, PasswordResetToken,
+    PendingFileDeletion, Profile, RefreshToken, User, WearLog,
 )
 
 log = logging.getLogger("dolab.deletion")
@@ -66,7 +71,24 @@ def _keys(photos) -> list[str]:
 
 def python_deletion(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
     """The deletion statements of dolab.apply_deletion, for SQLite. Not committed. Returns the
-    photo file keys to delete. Keep in step with migration 0005 (the parity test checks it)."""
+    photo file keys to delete, each once, and queues them in pending_file_deletions in the same
+    transaction (one INSERT; a key already queued is left as it is). Keep in step with
+    migration 0007 (the parity test checks it)."""
+    keys = list(dict.fromkeys(_delete_rows(db, entity_type, entity_id, user_id)))
+    if keys:
+        _queue_files(db, keys)
+    return keys
+
+
+def _queue_files(db: Session, keys: list[str]) -> None:
+    """SQLite's INSERT ... ON CONFLICT DO NOTHING, one statement for all keys."""
+    now = clock.now()
+    db.execute(sqlite_insert(PendingFileDeletion)
+               .values([{"key": k, "attempts": 0, "next_try_at": now, "created_at": now} for k in keys])
+               .on_conflict_do_nothing())
+
+
+def _delete_rows(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
     if entity_type == "item":
         if db.scalar(select(Item.id).where(Item.id == entity_id, Item.user_id == user_id)) is None:
             raise NotFound("no such item for this user")

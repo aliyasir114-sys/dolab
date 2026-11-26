@@ -180,7 +180,7 @@ def test_db18_memberships():
         )
         found = {(g, u): (i, s, a) for g, u, i, s, a in memberships if u not in allowed_extra}
         assert found == E.MEMBERSHIPS
-        for role in (E.APP, E.RECONCILER):
+        for role in (E.APP, E.RECONCILER, E.FILE_CLEANER):
             for target in (E.OWNER, E.DELETER):
                 assert value(conn, "SELECT pg_has_role(%s, %s, 'MEMBER')", role, target) is False
                 assert value(conn, "SELECT pg_has_role(%s, %s, 'SET')", role, target) is False
@@ -188,7 +188,7 @@ def test_db18_memberships():
 
 
 def test_db14_operating_roles_cannot_create_or_switch():
-    for role in (E.APP, E.RECONCILER):
+    for role in (E.APP, E.RECONCILER, E.FILE_CLEANER):
         with connect(role) as conn:
             assert denied(conn, "CREATE TABLE dolab.dz_probe (i int)")
             assert denied(conn, "CREATE FUNCTION dolab.dz_probe() RETURNS int LANGUAGE sql AS 'SELECT 1'")
@@ -349,7 +349,7 @@ def test_db16_new_objects_get_no_default_grants(scratch_db):
                     assert value(conn, "SELECT has_table_privilege(%s, %s, %s)", role, table, p) is False
                 for p in ("USAGE", "SELECT", "UPDATE"):
                     assert value(conn, "SELECT has_sequence_privilege(%s, %s, %s)", role, sequence, p) is False
-        for role in (E.APP, E.RECONCILER, "public"):
+        for role in (E.APP, E.RECONCILER, E.FILE_CLEANER, "public"):
             for function in ("dolab.f()", "dolab.g()"):
                 assert value(conn, "SELECT has_function_privilege(%s, %s, 'EXECUTE')", role, function) is False
             for type_name in ("dolab.ty", "dolab.ty2"):
@@ -446,7 +446,7 @@ def test_db22_migrations_on_empty_database_as_deploy(scratch_db, monkeypatch):
     command.upgrade(config, "head")
     command.check(config)  # the models and the migrations agree
     with connect(database=scratch_db) as conn:
-        assert value(conn, "SELECT version_num FROM dolab.alembic_version") == "0006_reconcile_purge"
+        assert value(conn, "SELECT version_num FROM dolab.alembic_version") == "0007_file_deletion_queue"
         assert set(owners(conn, _TABLES).values()) == {E.OWNER}
         for table, expected in E.TABLES.items():
             assert acl(conn, _TABLES)[table] == expected, table
@@ -574,9 +574,10 @@ def test_db23_api_connection():
 
 
 def test_reconciler_session_settings():
-    with connect(E.RECONCILER) as conn:
-        assert value(conn, "SHOW search_path") == "pg_catalog, dolab"
-        assert value(conn, "SHOW statement_timeout") == "30s"
+    for role in (E.RECONCILER, E.FILE_CLEANER):
+        with connect(role) as conn:
+            assert value(conn, "SHOW search_path") == "pg_catalog, dolab"
+            assert value(conn, "SHOW statement_timeout") == "30s"
 
 
 def test_api_test_suite_runs_as_app_role():

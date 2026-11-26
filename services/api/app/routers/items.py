@@ -91,7 +91,7 @@ def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> Ite
 def delete_item(item_id: str, user: CurrentUser, db: Db) -> Response:
     item = _own_item(db, user.id, item_id)
     # The ledger entry first; the deletion only once it is confirmed (plan 4.10.1).
-    delete_file_keys(delete_with_ledger(db, "item", item.id, user.id))
+    delete_file_keys(db, delete_with_ledger(db, "item", item.id, user.id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -106,7 +106,7 @@ def delete_photo(item_id: str, photo_id: str, user: CurrentUser, db: Db) -> Resp
     if photo is None or photo.item_id != item.id or photo.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "photo not found")
     # The ledger entry first; the deletion only once it is confirmed (plan 4.10.1).
-    delete_file_keys(delete_with_ledger(db, "photo", photo.id, user.id))
+    delete_file_keys(db, delete_with_ledger(db, "photo", photo.id, user.id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
