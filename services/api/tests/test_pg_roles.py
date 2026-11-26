@@ -234,19 +234,26 @@ def test_db13_schema_privileges():
 
 def test_db17_inventory_tables_match_expected_list():
     """Every table in dolab is classified, owned by the schema owner, and has exactly the listed
-    privileges; no column-level grants and no GRANT OPTION anywhere."""
+    privileges; column-level grants are exactly the listed ones (dolab_deleter's, migration 0005);
+    no GRANT OPTION anywhere."""
     with connect() as conn:
         found = acl(conn, _TABLES)
         assert set(found) == set(E.TABLES), "unclassified or missing tables"
         for table, expected in E.TABLES.items():
             assert found[table] == expected, table
         assert set(owners(conn, _TABLES).values()) == {E.OWNER}
-        column_grants = rows(
+        column_grants: dict[tuple[str, str], dict[str, set[str]]] = {}
+        for table, column, grantee, privilege, grantable in rows(
             conn,
-            "SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'dolab' AND a.attacl IS NOT NULL",
-        )
-        assert column_grants == []
+            "SELECT c.relname, a.attname, CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(x.grantee) END, "
+            "x.privilege_type, x.is_grantable "
+            "FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(a.attacl) x "
+            "WHERE n.nspname = 'dolab' AND a.attacl IS NOT NULL",
+        ):
+            assert not grantable, f"{grantee} may re-grant {privilege} on {table}.{column}"
+            column_grants.setdefault((table, column), {}).setdefault(grantee, set()).add(privilege)
+        assert column_grants == E.COLUMNS
 
 
 def test_app_privilege_matrix_effective():

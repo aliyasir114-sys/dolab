@@ -41,7 +41,7 @@ from ..schemas import (
 from .. import export
 from ..export import export_payload
 from ..deletion import delete_with_ledger
-from ..services import delete_photo_files
+from ..services import delete_file_keys
 from ..storage import StorageUnavailable
 from ..security import create_token, hash_password, new_secret_token, token_hash, verify_password
 
@@ -297,24 +297,8 @@ def export_zip(user: CurrentUser, db: Db) -> FileResponse:
 def delete_account(user: CurrentUser, db: Db) -> Response:
     """Delete the account and everything it owns, including photo files (PRD A6). One "user"
     ledger entry covers all of it, written and confirmed before anything is deleted."""
-    photos = list(db.scalars(select(ItemPhoto).where(ItemPhoto.user_id == user.id)))
     user_id = user.id
-
-    def apply(session) -> None:
-        session.execute(delete(ItemPhoto).where(ItemPhoto.user_id == user_id))
-        donation_ids = select(Donation.id).where(Donation.user_id == user_id)
-        session.execute(delete(DonationItem).where(DonationItem.donation_id.in_(donation_ids)))
-        session.execute(delete(Donation).where(Donation.user_id == user_id))
-        session.execute(delete(WearLog).where(WearLog.user_id == user_id))
-        session.execute(delete(ItemStatusChange).where(ItemStatusChange.user_id == user_id))
-        session.execute(delete(Item).where(Item.user_id == user_id))
-        session.execute(delete(Profile).where(Profile.user_id == user_id))
-        session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
-        session.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
-        session.execute(delete(User).where(User.id == user_id))
-
-    delete_with_ledger(db, "user", user_id, user_id, apply)
-    delete_photo_files(photos)
+    delete_file_keys(delete_with_ledger(db, "user", user_id, user_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

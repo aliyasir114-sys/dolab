@@ -209,3 +209,30 @@ class DeletionIntent(Base):
     entity_id: Mapped[str] = mapped_column(_ID)
     user_id: Mapped[str] = mapped_column(_ID)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ReconciledEntry(Base):
+    """A ledger entry whose deletion the reconciliation job completed (plan 4.10.1د): a second
+    call for the same entry answers already_done. Written only by dolab.reconcile_apply."""
+
+    __tablename__ = "reconciled_entries"
+
+    entry_id: Mapped[str] = mapped_column(_ID, primary_key=True)
+    reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditLog(Base):
+    """What the reconciliation job did: one row per entry it acted on or refused (owner
+    mismatch), one per run with counts. Identifiers and counts only: no email, no address, no
+    row data. Written only by the deleter functions; no operating role may read or change it."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(_ID, primary_key=True, default=new_id)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actor: Mapped[str] = mapped_column(String(20))
+    action: Mapped[str] = mapped_column(String(40))
+    entry_id: Mapped[str | None] = mapped_column(_ID, nullable=True)
+    entity_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)

@@ -23,6 +23,9 @@ from app.mailer import mailer  # noqa: E402
 from app.ratelimit import login_limiter, reset_limiter  # noqa: E402
 
 
+DELETER_ONLY_TABLES = {"reconciled_entries", "audit_log"}
+
+
 @pytest.fixture
 def client():
     if is_sqlite:
@@ -30,9 +33,12 @@ def client():
         Base.metadata.create_all(engine)
     else:
         # The API role may not drop, create or truncate tables: empty them row by row instead.
+        # Tables only the deleter functions write (migration 0005) are not the API's to empty;
+        # the tests that use them clear them as the database owner.
         with engine.begin() as conn:
             for table in reversed(Base.metadata.sorted_tables):
-                conn.execute(table.delete())
+                if table.name not in DELETER_ONLY_TABLES:
+                    conn.execute(table.delete())
     login_limiter.reset()
     reset_limiter.reset()
     mailer.sent.clear()

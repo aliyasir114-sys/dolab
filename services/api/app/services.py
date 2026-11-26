@@ -40,6 +40,16 @@ def set_status(
     item.status = new_status
 
 
+def delete_file_keys(keys: list[str]) -> None:
+    """Remove stored files by key, after the deletion is committed; failures are logged and left
+    for the orphan clean-up job."""
+    for key in keys:
+        try:
+            storage.delete(key)
+        except StorageUnavailable:
+            log.warning("photo file left in storage after its record was deleted: %s", key)
+
+
 def delete_photo_files(photos: list[ItemPhoto]) -> None:
     """Remove the stored files of the given photos. Call after the database change is committed.
 

@@ -14,25 +14,31 @@ the reconciliation job (next part of step C) completes that deletion.
 
 One entry per request: deleting an account is one "user" entry, however many photos it had.
 
+Step 4 runs the one deletion logic (plan 4.10.1د; Ali's decision 2026-11-26): on PostgreSQL the
+function dolab.apply_deletion, which the reconciliation function reconcile_apply also uses; on
+SQLite (development and tests only, no PL/pgSQL) the same statements in Python below. A test on
+PostgreSQL runs both on the same data and compares every affected table and the file keys
+(tests/test_pg_deleter_functions.py), so they cannot drift apart.
+
 Not covered yet: DELETE /me/profile (clearing body measurements) writes no entry, because format
 v1 knows only item, photo and user. Until "profile" is added in a format v2 (a separate request,
 Ali's decision 2026-11-25), a restored backup can bring cleared measurements back; the deletion
 guarantee is not complete before then.
 
-In the next part, step 4 moves into the one PostgreSQL function dolab.apply_deletion, shared with
-the reconciliation job, with a test that both delete the same.
 """
 import logging
-from collections.abc import Callable
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from . import clock, ledger, ledger_store
 from .config import settings
-from .db import SessionLocal
-from .models import DeletionIntent
+from .db import SessionLocal, is_sqlite
+from .models import (
+    DeletionIntent, Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, PasswordResetToken, Profile,
+    RefreshToken, User, WearLog,
+)
 
 log = logging.getLogger("dolab.deletion")
 
@@ -50,10 +56,75 @@ def _remove_intent(entry_id: str) -> None:
         db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry_id))
 
 
-def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: str,
-                       apply: Callable[[Session], None]) -> ledger.Entry:
-    """Run `apply` (the deletion statements, not yet committed) only once the ledger entry is
-    confirmed, and commit it together with the removal of the intent. Raises 503 otherwise."""
+class NotFound(LookupError):
+    """The entity does not exist for this user (the function raises no_data_found)."""
+
+
+def _keys(photos) -> list[str]:
+    return [key for p in photos for key in (p.original_key, p.thumb_key)]
+
+
+def python_deletion(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
+    """The deletion statements of dolab.apply_deletion, for SQLite. Not committed. Returns the
+    photo file keys to delete. Keep in step with migration 0005 (the parity test checks it)."""
+    if entity_type == "item":
+        if db.scalar(select(Item.id).where(Item.id == entity_id, Item.user_id == user_id)) is None:
+            raise NotFound("no such item for this user")
+        keys = _keys(db.execute(select(ItemPhoto.original_key, ItemPhoto.thumb_key)
+                                .where(ItemPhoto.item_id == entity_id)).all())
+        db.execute(delete(WearLog).where(WearLog.item_id == entity_id))
+        db.execute(delete(ItemStatusChange).where(ItemStatusChange.item_id == entity_id))
+        db.execute(delete(DonationItem).where(DonationItem.item_id == entity_id))
+        # Explicit statements in dependency order: the models declare no relationships, so the ORM
+        # would not know the photos must go before the item (PostgreSQL enforces the foreign key).
+        db.execute(delete(ItemPhoto).where(ItemPhoto.item_id == entity_id))
+        db.execute(delete(Item).where(Item.id == entity_id))
+        return keys
+    if entity_type == "photo":
+        rows = db.execute(select(ItemPhoto.original_key, ItemPhoto.thumb_key)
+                          .where(ItemPhoto.id == entity_id, ItemPhoto.user_id == user_id)).all()
+        if not rows:
+            raise NotFound("no such photo for this user")
+        db.execute(delete(ItemPhoto).where(ItemPhoto.id == entity_id))
+        return _keys(rows)
+    if entity_type == "user":
+        if entity_id != user_id or db.scalar(select(User.id).where(User.id == user_id)) is None:
+            raise NotFound("no such account")
+        keys = _keys(db.execute(select(ItemPhoto.original_key, ItemPhoto.thumb_key)
+                                .where(ItemPhoto.user_id == user_id)).all())
+        db.execute(delete(ItemPhoto).where(ItemPhoto.user_id == user_id))
+        donation_ids = select(Donation.id).where(Donation.user_id == user_id)
+        db.execute(delete(DonationItem).where(DonationItem.donation_id.in_(donation_ids)))
+        db.execute(delete(Donation).where(Donation.user_id == user_id))
+        db.execute(delete(WearLog).where(WearLog.user_id == user_id))
+        db.execute(delete(ItemStatusChange).where(ItemStatusChange.user_id == user_id))
+        db.execute(delete(Item).where(Item.user_id == user_id))
+        db.execute(delete(Profile).where(Profile.user_id == user_id))
+        db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+        db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+        db.execute(delete(User).where(User.id == user_id))
+        return keys
+    raise ValueError("unknown entity type")
+
+
+def function_deletion(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
+    """dolab.apply_deletion on PostgreSQL. Not committed. Returns the photo file keys."""
+    db.flush()
+    return list(db.scalars(text("SELECT dolab.apply_deletion(:entity_type, CAST(:entity_id AS uuid), "
+                                "CAST(:user_id AS uuid))"),
+                           {"entity_type": entity_type, "entity_id": entity_id, "user_id": user_id}))
+
+
+def apply_deletion(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
+    """The one deletion logic: the PostgreSQL function, or its Python twin on SQLite."""
+    if is_sqlite:
+        return python_deletion(db, entity_type, entity_id, user_id)
+    return function_deletion(db, entity_type, entity_id, user_id)
+
+
+def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
+    """Delete one item, photo or account (steps 1 to 4 above) and return the photo file keys
+    for the caller to delete (step 5). Raises 503 if the ledger entry cannot be written."""
     entry = ledger.make_entry(signing_key, settings.ledger_key_id, entity_type, entity_id, user_id, clock.now(),
                               environment=settings.environment)
     _record_intent(entry)
@@ -66,7 +137,7 @@ def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: s
             log.exception("deletion intent left behind after a failed ledger write: %s", entry.entry_id)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "deleting is unavailable for a moment, try again shortly",
                             headers={"Retry-After": "30"}) from error
-    apply(db)
+    keys = apply_deletion(db, entity_type, entity_id, user_id)
     db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry.entry_id))
     db.commit()
-    return entry
+    return keys
