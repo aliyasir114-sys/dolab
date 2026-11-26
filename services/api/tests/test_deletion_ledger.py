@@ -7,12 +7,13 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
 
-from app import deletion, ledger, ledger_store
+from app import clock, deletion, ledger, ledger_store
 from app.config import settings
 from app.db import SessionLocal
 from app.models import DeletionIntent, Item, ItemPhoto, User
@@ -28,9 +29,10 @@ PUBLIC = {settings.ledger_key_id: deletion.signing_key.public_key()}
 def entries() -> dict[str, bytes]:
     """Every entry written so far, by object name. The server itself can never read the ledger."""
     if settings.ledger_storage == "s3":
-        import boto3
+        import boto3.session
 
-        client = boto3.client("s3", endpoint_url=settings.s3_endpoint_url, region_name=settings.s3_region)
+        client = boto3.session.Session().client("s3", endpoint_url=settings.s3_endpoint_url,
+                                                region_name=settings.s3_region)
         found = {}
         for page in client.get_paginator("list_objects_v2").paginate(Bucket=settings.ledger_bucket):
             for item in page.get("Contents", []):
@@ -238,32 +240,25 @@ def test_writing_gives_up_within_two_seconds():
 
 
 def test_s3_timeouts_obey_deadline_and_failure_preserves_item(client, signup, monkeypatch):
-    import boto3
+    # Clients that take their whole socket timeout and then fail: each retry uses a smaller tier,
+    # and the write still ends within the budget.
     from botocore.exceptions import ClientError
 
     headers = signup()
     item_id = new_item(client, headers)
-    configs = []
+    used = []
 
-    def make_client(_service, *, endpoint_url, region_name, config):
-        configs.append(config)
+    class DelayedS3:
+        def __init__(self, total):
+            self.total = total
 
-        class DelayedS3:
-            def put_object(self, **_kwargs):
-                time.sleep(config.connect_timeout + config.read_timeout)
-                raise ClientError({"Error": {"Code": "SlowDown", "Message": "timed out"}}, "PutObject")
+        def put_object(self, **_kwargs):
+            used.append(self.total)
+            time.sleep(self.total)
+            raise ClientError({"Error": {"Code": "SlowDown", "Message": "timed out"}}, "PutObject")
 
-            def close(self):
-                pass
-
-        return DelayedS3()
-
-    monkeypatch.setattr(boto3, "client", make_client)
-    monkeypatch.setattr(
-        ledger_store,
-        "writer",
-        ledger_store.S3Ledger("ledger", endpoint_url="https://s3.example.test"),
-    )
+    tiers = [(c + r, DelayedS3(c + r)) for c, r in ledger_store.TIERS]
+    monkeypatch.setattr(ledger_store, "writer", ledger_store.S3Ledger("ledger", clients=tiers))
     durations = []
     real_write_entry = ledger_store.write_entry
 
@@ -279,12 +274,133 @@ def test_s3_timeouts_obey_deadline_and_failure_preserves_item(client, signup, mo
 
     assert response.status_code == 503
     assert durations and durations[0] < ledger_store.BUDGET_SECONDS
-    assert len(configs) == 2
-    assert all(config.retries["total_max_attempts"] == 1 for config in configs)
-    assert configs[1].connect_timeout < configs[0].connect_timeout
-    assert configs[1].read_timeout < configs[0].read_timeout
+    assert len(used) >= 2 and used == sorted(used, reverse=True) and used[1] < used[0]
     assert count(Item, id=item_id) == 1
     assert intents() == []
+
+
+def test_s3_clients_are_made_once_from_their_own_sessions(monkeypatch):
+    # Never boto3.client(), the shared default session; one fresh session per client, at start-up.
+    import boto3
+    import boto3.session
+
+    def shared(*_args, **_kwargs):
+        raise AssertionError("boto3.client() uses the shared default session")
+
+    monkeypatch.setattr(boto3, "client", shared)
+    sessions = []
+    real_session = boto3.session.Session
+
+    class Counting(real_session):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            sessions.append(self)
+
+    monkeypatch.setattr(boto3.session, "Session", Counting)
+    writer = ledger_store.S3Ledger("ledger", endpoint_url="http://127.0.0.1:9")
+    assert len(sessions) == len(ledger_store.TIERS) == len(writer.clients)
+    assert len({id(s) for s in sessions}) == len(sessions)
+    assert len({id(c) for _, c in writer.clients}) == len(writer.clients)
+    assert [round(total, 2) for total, _ in writer.clients] == [round(c + r, 2) for c, r in ledger_store.TIERS]
+    # Writing makes no session or client.
+    with pytest.raises(ledger_store.LedgerUnavailable):
+        writer.put_with_timeout("2026/11/25/x.json", b"{}", 0.01)  # no tier fits: refused at once
+    assert len(sessions) == len(ledger_store.TIERS)
+
+
+def _silent_server():
+    """A TCP server that accepts connections and never answers: an unresponsive ledger."""
+    import socket
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(16)
+    held = []
+    stop = threading.Event()
+
+    def accept():
+        server.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                held.append(server.accept()[0])
+            except OSError:
+                continue
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+
+    def close():
+        stop.set()
+        thread.join(2)
+        for connection in held:
+            connection.close()
+        server.close()
+
+    return server.getsockname()[1], close
+
+
+def test_an_unresponsive_ledger_fails_within_two_seconds_and_deletes_nothing(client, signup, monkeypatch):
+    # The real S3Ledger and its real clients, against a server that never answers.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    port, close = _silent_server()
+    try:
+        writer = ledger_store.S3Ledger("ledger", endpoint_url=f"http://127.0.0.1:{port}", encryption=None)
+        monkeypatch.setattr(ledger_store, "writer", writer)
+        headers = signup()
+        item_id = new_item(client, headers)
+        photo = upload(client, headers, item_id).json()
+        started = time.monotonic()
+        response = client.delete(f"/items/{item_id}", headers=headers)
+        elapsed = time.monotonic() - started
+    finally:
+        close()
+    assert response.status_code == 503
+    assert elapsed < ledger_store.BUDGET_SECONDS + 0.5, elapsed  # the write itself within 2 s; the rest is the request
+    assert count(Item, id=item_id) == 1 and count(ItemPhoto, id=photo["id"]) == 1
+    assert intents() == []
+
+
+@pytest.mark.skipif(settings.ledger_storage != "s3", reason="needs the S3 ledger (MinIO in CI)")
+def test_concurrent_deletions_write_their_entries_through_the_shared_clients(client, monkeypatch):
+    # Many request threads writing at once through the real S3Ledger on MinIO.
+    import threading
+
+    import boto3
+
+    def shared(*_args, **_kwargs):
+        raise AssertionError("boto3.client() uses the shared default session")
+
+    monkeypatch.setattr(boto3, "client", shared)
+    before = entries()
+    made, durations, errors = [], [], []
+    lock = threading.Lock()
+
+    def write(n):
+        entry = ledger.make_entry(deletion.signing_key, settings.ledger_key_id, "item", str(uuid.uuid4()),
+                                  str(uuid.uuid4()), clock.now(), environment=settings.environment)
+        started = time.monotonic()
+        try:
+            ledger_store.write_entry(ledger_store.writer, entry)
+        except Exception as error:  # reported below
+            with lock:
+                errors.append(error)
+            return
+        with lock:
+            made.append(entry)
+            durations.append(time.monotonic() - started)
+
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert errors == []
+    assert len(made) == 16
+    assert max(durations) < ledger_store.BUDGET_SECONDS, durations
+    written = {e.entry_id for e in new_entries(before)}
+    assert written == {e.entry_id for e in made}
 
 
 def test_an_entry_is_never_replaced(client, tmp_path):
