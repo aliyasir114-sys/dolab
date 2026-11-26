@@ -20,14 +20,16 @@ A run, in this order (Ali, 2026-11-26):
 3. Read and verify every entry (ledger-entry-v1: format, object name, known key, signature, age).
    An invalid entry is counted and never acted on. An entry older than 31 days is skipped.
 4. Call reconcile_apply for each valid entry. One failure is counted and the others go on.
-5. Only if every entry was valid and every call succeeded: purge intents older than 31 days.
-6. Record the run (counts only). It is recorded as failed if any entry was invalid or any error
-   happened. Exit 1 in that case, 0 otherwise.
+5. Only if every entry was valid, every call succeeded and no entry named an entity its user
+   does not own: purge intents older than 31 days.
+6. Record the run (counts only). It is recorded as failed if any entry was invalid, any error
+   happened, or any owner_mismatch was found (a forged or corrupted intent: it must alert).
+   Exit 1 in that case, 0 otherwise.
 
 --dry-run changes nothing: reconcile_apply and the purge are asked what they would do, and the run
 is not recorded. Logs carry counts, outcomes and entry ids only; never user or entity ids.
 
-Exit codes: 0 done; 1 done with invalid entries or errors; 2 ledger listing failed; 3 another run
+Exit codes: 0 done; 1 done with invalid entries, errors or an owner mismatch; 2 ledger listing failed; 3 another run
 is in progress; 4 refused to start (configuration).
 """
 import argparse
@@ -282,7 +284,10 @@ class Report:
 
     @property
     def clean(self) -> bool:
-        return not self.listing_failed and self.invalid == 0 and self.errors == 0
+        # An owner mismatch deletes nothing, but it means an intent names someone else's data:
+        # the run fails, so a scheduler watching the exit code alerts on it (review of #58).
+        return (not self.listing_failed and self.invalid == 0 and self.errors == 0
+                and self.outcomes["owner_mismatch"] == 0)
 
     def summary(self) -> str:
         outcomes = ", ".join(f"{name} {count}" for name, count in self.outcomes.items())
@@ -352,7 +357,7 @@ def run(reader: LedgerReader, db: Database, public_keys: dict, *, dry_run: bool 
             log.error("intent purge failed (%s)", type(error).__name__)
             report.errors += 1
     else:
-        log.warning("intent purge skipped: the run had invalid entries or errors")
+        log.warning("intent purge skipped: the run had invalid entries, errors or an owner mismatch")
     return _finish(report, db, now)
 
 

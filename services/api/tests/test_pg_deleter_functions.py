@@ -280,11 +280,12 @@ def test_a_run_is_recorded_with_counts_only(db_client):
         "no_intent": 2, "owner_mismatch": 0, "errors": 0}
 
 
-@pytest.mark.parametrize("bad, errors_, expected", [(0, 0, "recorded"), (1, 0, "failed"), (0, 1, "failed")])
-def test_a_run_with_problems_is_recorded_as_failed(db_client, bad, errors_, expected):
+@pytest.mark.parametrize("bad, mismatch, errors_, expected", [
+    (0, 0, 0, "recorded"), (1, 0, 0, "failed"), (0, 1, 0, "failed"), (0, 0, 1, "failed")])
+def test_a_run_with_problems_is_recorded_as_failed(db_client, bad, mismatch, errors_, expected):
     with connect(E.RECONCILER) as conn:
-        conn.execute("SELECT dolab.reconcile_record_run(now() - interval '1 minute', now(), 1, 1, %s, 0, 0, 0, 0, 0, %s)",
-                     (bad, errors_))
+        conn.execute("SELECT dolab.reconcile_record_run(now() - interval '1 minute', now(), 1, 1, %s, 0, 0, 0, 0, %s, %s)",
+                     (bad, mismatch, errors_))
     with connect() as admin:
         assert rows(admin, "SELECT outcome FROM dolab.audit_log") == [(expected,)]
 

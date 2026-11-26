@@ -236,6 +236,13 @@ def test_one_failing_entry_does_not_stop_the_others_but_stops_the_purge():
     assert report.purged is None and db.recorded and R.exit_code(report) == R.EXIT_PROBLEMS
 
 
+def test_an_owner_mismatch_fails_the_run_and_stops_the_purge():
+    report, db, _ = go(ledger_of(entry(), entry()), db=FakeDb(outcome="owner_mismatch"))
+    assert report.outcomes["owner_mismatch"] == 2 and report.errors == 0 and report.invalid == 0
+    assert not report.clean and report.purged is None and ("purge", False) not in db.calls
+    assert db.recorded and R.exit_code(report) == R.EXIT_PROBLEMS
+
+
 def test_unknown_outcomes_are_errors():
     report, _, _ = go(ledger_of(entry()), db=FakeDb(outcome="surprise"))
     assert report.errors == 1 and report.purged is None

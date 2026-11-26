@@ -5,8 +5,8 @@
   with the count only (not on a dry run). The reconciliation job calls it only after a run in
   which the ledger was listed in full and every entry was valid and processed (Ali, 2026-11-26).
 - dolab.reconcile_record_run: same signature as in 0005; the run is now recorded as 'failed'
-  when any entry was invalid or any error happened (a failed ledger listing counts as an
-  error), and as 'recorded' otherwise.
+  when any entry was invalid, any error happened (a failed ledger listing counts as an error)
+  or any owner mismatch was found, and as 'recorded' otherwise.
 
 Both SECURITY DEFINER, owned by dolab_deleter, search_path pinned, no EXECUTE for PUBLIC; only
 dolab_reconciler may run them. dolab_deleter needs no new privilege: it already reads
@@ -71,7 +71,7 @@ _RECORDED = "'reconcile.run', 'recorded',"
 assert RECORD_RUN_0005.count(_RECORDED) == 1
 RECORD_RUN = RECORD_RUN_0005.replace(
     _RECORDED,
-    "'reconcile.run',\n            CASE WHEN p_bad > 0 OR p_errors > 0 THEN 'failed' ELSE 'recorded' END,",
+    "'reconcile.run',\n            CASE WHEN p_bad > 0 OR p_errors > 0 OR p_owner_mismatch > 0 THEN 'failed' ELSE 'recorded' END,",
 )
 
 

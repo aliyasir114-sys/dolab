@@ -82,15 +82,18 @@ def test_every_outcome_through_the_job(db_client, signup, tmp_path):
     intent_for(forged)
     for e in (absent, finished, forged):
         put(tmp_path, e)
+    stale = intent("item", item_id, mine, age=timedelta(days=32))
     before_theirs = db_client.get("/items", headers=their_headers).json()
 
     report = job(tmp_path)
     assert {k: v for k, v in report.outcomes.items() if v} == {"absent": 1, "no_intent": 1, "owner_mismatch": 1}
-    assert R.exit_code(report) == R.EXIT_OK
+    # An owner mismatch fails the run and stops the purge (review of #58).
+    assert R.exit_code(report) == R.EXIT_PROBLEMS and report.purged is None
+    assert stale in [i[0] for i in state()["deletion_intents"]]
     assert db_client.get("/items", headers=their_headers).json() == before_theirs
     assert ("reconciler", "reconcile.entry", forged.entry_id, "item", "owner_mismatch") in audit()
     ((outcome, counts),) = runs()
-    assert outcome == "recorded" and counts["absent"] == 1 and counts["owner_mismatch"] == 1
+    assert outcome == "failed" and counts["absent"] == 1 and counts["owner_mismatch"] == 1
     assert db_client.get(f"/items/{item_id}", headers=headers).status_code == 200
 
 

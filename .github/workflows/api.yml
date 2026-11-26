@@ -124,6 +124,9 @@ jobs:
           # Pinned by digest (the image whose signature was first verified in CI on 2026-11-26);
           # its signature is still checked on every run. To update: take the new digest from a
           # verified run and change it here in a reviewed pull request.
+          # Known limit (review of #58): the cosign image is pinned by digest, so it cannot change
+          # unnoticed, but where that digest came from was not checked independently (it is the
+          # one cgr.dev served on 2026-11-26). CI only; never used outside this job.
           MC_IMAGE: cgr.dev/chainguard/minio-client@sha256:fac83a05890847b4af12e406018088d54f16f1d53e6e39cb68e56591be6e5b3a
           COSIGN_IMAGE: cgr.dev/chainguard/cosign@sha256:bfc3e068b714f251042d6c1b2fe5f1c3ee8e577d3d36271ae62be5f3a00cc185
         run: |
