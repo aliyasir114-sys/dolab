@@ -43,8 +43,18 @@ def photo_keys(photo_id: str) -> list[str]:
 @pytest.fixture
 def waits(monkeypatch):
     slept: list[float] = []
-    monkeypatch.setattr(services.time, "sleep", slept.append)
+    monkeypatch.setattr(services, "_sleep", slept.append)
     return slept
+
+
+class FakeClock:
+    """services' monotonic clock, advanced by the fake storage to stand for slow calls."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
 
 
 @pytest.fixture
@@ -83,7 +93,7 @@ def test_f1_storage_fails_twice_then_works(client, signup, monkeypatch, waits):
     monkeypatch.setattr(storage, "delete", flaky)
     assert client.delete(f"/items/{item_id}/photos/{photo['id']}", headers=headers).status_code == 204
     assert stored_files(client, headers) == [] and queued() == []
-    assert waits == [0.2, 0.6, 0.2, 0.6] and sum(waits) <= services.FILE_DELETE_WAIT_BUDGET
+    assert waits == [0.2, 0.6, 0.2, 0.6] and sum(waits) <= services.FILE_FAILURE_BUDGET
 
 
 def test_f2_storage_down_the_deletion_still_succeeds_and_the_files_stay_queued(client, signup, storage_down, waits):
@@ -95,8 +105,8 @@ def test_f2_storage_down_the_deletion_still_succeeds_and_the_files_stay_queued(c
     assert client.get(f"/items/{item_id}/photos", headers=headers).json() == []
     assert client.get(photo["url"].removeprefix("/v1")).status_code == 404  # the old link is dead at once
     assert queued() == keys
-    # Three tries on the first file, then it stops: storage is down, the rest waits in the queue.
-    assert len(storage_down) == 3 and sum(waits) <= services.FILE_DELETE_WAIT_BUDGET
+    # Three tries on each of the two files; two files failed in a row: storage is down.
+    assert len(storage_down) == 6 and sum(waits) <= services.FILE_FAILURE_BUDGET
 
 
 def test_f6_an_account_with_50_photos_and_storage_down_queues_100_files(client, signup, storage_down, waits):
@@ -108,7 +118,7 @@ def test_f6_an_account_with_50_photos_and_storage_down_queues_100_files(client, 
     assert client.delete("/me", headers=headers).status_code == 204
     keys = queued()
     assert len(keys) == 100 and len(set(keys)) == 100
-    assert len(storage_down) == 3
+    assert len(storage_down) == 6  # two files in a row failed: the other 98 wait in the queue
 
 
 def test_a_file_already_queued_is_queued_once(client, signup, storage_down, waits):
@@ -156,3 +166,63 @@ def test_rows_stay_if_they_cannot_be_removed(client, signup, monkeypatch, caplog
     assert queued() == keys  # the queue job will find the files gone and remove the rows
     assert "queue rows of 2 deleted photo files not removed" in caplog.text
     assert not any(k in caplog.text for k in keys)
+
+
+def test_l1_one_file_that_keeps_failing_does_not_stop_the_others(client, signup, monkeypatch, waits):
+    headers = signup()
+    item_id = new_item(client, headers)
+    photos = [upload(client, headers, item_id).json() for _ in range(3)]
+    stuck = photo_keys(photos[0]["id"])[0]
+    real = storage.delete
+
+    def one_bad(key):
+        if key == stuck:
+            raise StorageUnavailable("AccessDenied on this object")
+        real(key)
+
+    monkeypatch.setattr(storage, "delete", one_bad)
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+    assert queued() == [stuck]  # only the failing file stays queued; it is not lost
+    assert stored_files(client, headers) == [stuck]
+
+
+def test_two_files_failing_in_a_row_stop_the_attempt(client, signup, monkeypatch, waits):
+    headers = signup()
+    item_id = new_item(client, headers)
+    photos = [upload(client, headers, item_id).json() for _ in range(3)]
+    keys = sorted(k for p in photos for k in photo_keys(p["id"]))
+    calls: list[str] = []
+
+    def down(key):
+        calls.append(key)
+        raise StorageUnavailable("down")
+
+    monkeypatch.setattr(storage, "delete", down)
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+    # Three tries on each of the first two files; the other four were never tried.
+    assert len(calls) == 6 and len(set(calls)) == 2
+    assert queued() == keys
+
+
+def test_m2_slow_failing_calls_count_against_the_budget(client, signup, monkeypatch, waits):
+    """The budget is real time spent on failures (calls and waits), not only the waits."""
+    headers = signup()
+    item_id = new_item(client, headers)
+    photos = [upload(client, headers, item_id).json() for _ in range(3)]
+    keys = sorted(k for p in photos for k in photo_keys(p["id"]))
+    clock = FakeClock()
+    monkeypatch.setattr(services, "_monotonic", clock)
+    calls: list[str] = []
+
+    def hangs_then_fails(key):
+        calls.append(key)
+        clock.now += 1.5  # each call hangs 1.5 s, then fails
+        raise StorageUnavailable("read timeout")
+
+    monkeypatch.setattr(storage, "delete", hangs_then_fails)
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+    # 1.5 s spent: a 0.2 s wait still fits the 2 s budget; then 1.5 + 0.2 + 1.5 = 3.2 s, so no
+    # third try, and with the budget spent the failure ends the attempt: no other file is tried.
+    assert len(calls) == 2 and len(set(calls)) == 1 and waits == [0.2]
+    assert clock.now - 1000.0 + sum(waits) <= services.FILE_FAILURE_BUDGET + 1.5  # budget + one call
+    assert queued() == keys

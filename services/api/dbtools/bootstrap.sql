@@ -82,6 +82,9 @@ BEGIN
     EXECUTE format('ALTER ROLE dolab_reconciler IN DATABASE %I SET statement_timeout = ''30s''', current_database());
     EXECUTE format('ALTER ROLE dolab_file_cleaner IN DATABASE %I SET search_path = pg_catalog, dolab', current_database());
     EXECUTE format('ALTER ROLE dolab_file_cleaner IN DATABASE %I SET statement_timeout = ''30s''', current_database());
+    -- The queue job keeps no transaction open while it calls storage; one left open is ended.
+    EXECUTE format('ALTER ROLE dolab_file_cleaner IN DATABASE %I SET idle_in_transaction_session_timeout = ''60s''',
+                   current_database());
     -- Migrations name every object in full; dolab must not be the default schema for Alembic.
     EXECUTE format('ALTER ROLE dolab_deploy IN DATABASE %I SET search_path = pg_catalog', current_database());
 END

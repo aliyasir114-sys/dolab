@@ -578,6 +578,8 @@ def test_reconciler_session_settings():
         with connect(role) as conn:
             assert value(conn, "SHOW search_path") == "pg_catalog, dolab"
             assert value(conn, "SHOW statement_timeout") == "30s"
+    with connect(E.FILE_CLEANER) as conn:
+        assert value(conn, "SHOW idle_in_transaction_session_timeout") == "1min"
 
 
 def test_api_test_suite_runs_as_app_role():

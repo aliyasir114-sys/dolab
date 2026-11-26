@@ -31,6 +31,7 @@ guarantee is not complete before then.
 
 """
 import logging
+from datetime import timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select, text
@@ -80,11 +81,17 @@ def python_deletion(db: Session, entity_type: str, entity_id: str, user_id: str)
     return keys
 
 
+# A newly queued file is first due for the queue job this long after the deletion, so the job
+# never takes it while the server's immediate attempt is still working on it (migration 0007).
+FIRST_TRY_DELAY = timedelta(minutes=5)
+
+
 def _queue_files(db: Session, keys: list[str]) -> None:
     """SQLite's INSERT ... ON CONFLICT DO NOTHING, one statement for all keys."""
     now = clock.now()
+    due = now + FIRST_TRY_DELAY
     db.execute(sqlite_insert(PendingFileDeletion)
-               .values([{"key": k, "attempts": 0, "next_try_at": now, "created_at": now} for k in keys])
+               .values([{"key": k, "attempts": 0, "next_try_at": due, "created_at": now} for k in keys])
                .on_conflict_do_nothing())
 
 

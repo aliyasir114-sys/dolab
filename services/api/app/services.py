@@ -1,10 +1,9 @@
 """Small rules shared by several routers."""
 import logging
 import time
-from collections.abc import Callable
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .media import signed_path
@@ -43,17 +42,31 @@ def set_status(
     item.status = new_status
 
 
-# The immediate attempt (plan 4.10.3, layer 1): three tries per file, waits growing to at most two
-# seconds in all. A file whose three tries fail means storage is down: the attempt stops there,
-# and that file and the rest stay queued for the queue job.
+# The immediate attempt after the commit (plan 4.10.3, layer 1; notice #59 and its review).
+# - Each file gets up to three tries, with waits of 0.2 s then 0.6 s between them.
+# - A file that fails does not stop the others: the next file is tried. The attempt stops when
+#   two files in a row have failed (storage looks down), or when the time spent on failures
+#   (failed storage calls, measured on a monotonic clock, plus the waits) has reached two
+#   seconds; after that no retry starts, and the next failed file ends the attempt.
+# - A storage call that is already running is not cut short: it ends within the storage
+#   client's own connect and read timeouts and retries (app.storage). So the bound on the time
+#   lost to a failing storage is two seconds plus at most one such call.
+# Files that were not deleted stay queued (apply_deletion queued them before the commit).
 FILE_DELETE_TRIES = 3
-FILE_DELETE_WAIT_BUDGET = 2.0
+FILE_FAILURE_BUDGET = 2.0
+FAILED_FILES_IN_A_ROW = 2
 _WAITS = (0.2, 0.6)
 # Rows removed per statement (SQLite's bound-parameter limit; small statements on PostgreSQL).
 _QUEUE_CHUNK = 500
+# How long the removal of queue rows may wait for a row lock on PostgreSQL. The queue job does
+# not hold row locks while it deletes files (it leases rows instead), so a wait means something
+# unusual holds them: the rows are then left for the job, which finds the files gone.
+QUEUE_LOCK_TIMEOUT = "2s"
+_sleep = time.sleep
+_monotonic = time.monotonic
 
 
-def delete_file_keys(db: Session, keys: list[str], *, sleep: Callable[[float], None] | None = None) -> int:
+def delete_file_keys(db: Session, keys: list[str]) -> int:
     """Delete the photo files of a committed deletion, then remove their queue rows.
 
     Call only after the commit: apply_deletion queued every key in pending_file_deletions in the
@@ -61,29 +74,34 @@ def delete_file_keys(db: Session, keys: list[str], *, sleep: Callable[[float], N
     gone counts as deleted. Returns how many files are left for the queue job. Logs counts only,
     never keys (a key carries the user id).
     """
-    sleep = sleep or time.sleep
     deleted: list[str] = []
-    budget = FILE_DELETE_WAIT_BUDGET
-
-    def delete_one(key: str) -> bool:
-        nonlocal budget
+    spent = 0.0  # seconds spent on failures
+    failed_in_a_row = 0
+    for key in keys:
+        ok = False
         for attempt in range(FILE_DELETE_TRIES):
+            started = _monotonic()
             try:
                 storage.delete(key)
-                return True
+                ok = True
+                break
             except StorageUnavailable:
-                if attempt == FILE_DELETE_TRIES - 1 or _WAITS[attempt] > budget:
-                    return False
-                sleep(_WAITS[attempt])
-                budget -= _WAITS[attempt]
-        return False
-
-    for key in keys:
-        if not delete_one(key):
-            break  # this file failed all its tries: storage is down, leave the rest queued
-        deleted.append(key)
+                spent += _monotonic() - started
+            if attempt == FILE_DELETE_TRIES - 1 or spent + _WAITS[attempt] > FILE_FAILURE_BUDGET:
+                break
+            _sleep(_WAITS[attempt])
+            spent += _WAITS[attempt]
+        if ok:
+            deleted.append(key)
+            failed_in_a_row = 0
+            continue
+        failed_in_a_row += 1
+        if failed_in_a_row >= FAILED_FILES_IN_A_ROW or spent >= FILE_FAILURE_BUDGET:
+            break
     if deleted:
         try:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text(f"SET LOCAL lock_timeout = '{QUEUE_LOCK_TIMEOUT}'"))
             for start in range(0, len(deleted), _QUEUE_CHUNK):
                 chunk = deleted[start:start + _QUEUE_CHUNK]
                 db.execute(sa_delete(PendingFileDeletion).where(PendingFileDeletion.key.in_(chunk)))
@@ -100,16 +118,19 @@ def delete_file_keys(db: Session, keys: list[str], *, sleep: Callable[[float], N
 def delete_photo_files(photos: list[ItemPhoto]) -> None:
     """Remove the stored files of the given photos. Call after the database change is committed.
 
-    The deletion has already happened for the user, and the photo's links stop working with its
-    record, so a storage failure here does not fail the request: it is logged, and the file is
-    left for the orphan clean-up job (step C, a later pull request).
+    Used when an upload fails after its files were saved: the photo record was never committed,
+    so a storage failure here leaves the file for the orphan clean-up job. Logs counts only,
+    never keys (a key carries the user id).
     """
+    left = 0
     for photo in photos:
         for key in (photo.original_key, photo.thumb_key):
             try:
                 storage.delete(key)
             except StorageUnavailable:
-                log.warning("photo file left in storage after its record was deleted: %s", key)
+                left += 1
+    if left:
+        log.warning("%d photo files of a failed upload left in storage for the orphan job", left)
 
 
 def items_out(db: Session, items: list[Item]) -> list[ItemOut]:

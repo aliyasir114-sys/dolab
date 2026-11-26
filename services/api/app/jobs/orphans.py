@@ -137,7 +137,8 @@ def sweep(
         except (StorageUnavailable, OSError) as error:
             # Both storages raise StorageUnavailable; OSError is caught too, so a storage that
             # lets a disk error through still cannot stop the rest of the batch.
-            log.warning("orphan file could not be deleted, will retry next run: %s (%s)", key, error)
+            # The key is not logged: it carries the user id. The count is in the summary.
+            log.warning("an orphan file could not be deleted, will retry next run (%s)", type(error).__name__)
             report.failed.append(key)
         else:
             report.deleted.append(key)

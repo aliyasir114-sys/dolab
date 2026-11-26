@@ -39,6 +39,12 @@ def queue_rows():
         return rows(admin, "SELECT key, attempts, last_error FROM dolab.pending_file_deletions ORDER BY key")
 
 
+def make_due():
+    """Time passes: every queued file is due now (rows start five minutes ahead, for the server)."""
+    with connect() as admin:
+        admin.execute("UPDATE dolab.pending_file_deletions SET next_try_at = now()")
+
+
 def admin_enqueue(key, created=timedelta(0), due=timedelta(0)):
     with connect() as admin:
         admin.execute("INSERT INTO dolab.pending_file_deletions (key, attempts, next_try_at, created_at) "
@@ -62,7 +68,7 @@ def storage_down(monkeypatch):
         raise StorageUnavailable("down")
 
     monkeypatch.setattr(storage, "delete", down)
-    monkeypatch.setattr("app.services.time.sleep", lambda _s: None)
+    monkeypatch.setattr("app.services._sleep", lambda _s: None)
     return switch
 
 
@@ -75,11 +81,17 @@ def test_the_file_cleaner_has_the_queue_and_nothing_else():
         for table in tables:
             have = {p for p in PRIVILEGES
                     if value(admin, "SELECT has_table_privilege(%s, %s, %s)", E.FILE_CLEANER, f"dolab.{table}", p)}
-            assert have == ({"SELECT", "UPDATE", "DELETE"} if table == QUEUE else set()), table
+            assert have == ({"SELECT", "DELETE"} if table == QUEUE else set()), table
             if table != QUEUE:
                 for p in ("SELECT", "INSERT", "UPDATE"):
                     assert value(admin, "SELECT has_any_column_privilege(%s, %s, %s)",
                                  E.FILE_CLEANER, f"dolab.{table}", p) is False, table
+        # UPDATE on three columns of the queue only (review of #60, M3).
+        updatable = {c for (c,) in rows(admin, "SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass "
+                                               "AND attnum > 0 AND NOT attisdropped", f"dolab.{QUEUE}")
+                     if value(admin, "SELECT has_column_privilege(%s, %s, %s, 'UPDATE')", E.FILE_CLEANER,
+                              f"dolab.{QUEUE}", c)}
+        assert updatable == {"attempts", "next_try_at", "last_error"}
         functions = [f for (f,) in rows(admin, "SELECT p.oid::regprocedure::text FROM pg_proc p "
                                                "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dolab'")]
         assert functions
@@ -94,6 +106,8 @@ def test_the_file_cleaner_is_refused_everything_else_for_real():
                           "INSERT INTO dolab.pending_file_deletions (key, attempts, next_try_at, created_at) "
                           "VALUES ('x', 0, now(), now())",
                           "TRUNCATE dolab.pending_file_deletions",
+                          "UPDATE dolab.pending_file_deletions SET key = 'other-user/x.jpg'",
+                          "UPDATE dolab.pending_file_deletions SET created_at = now()",
                           "SELECT 1 FROM dolab.audit_log", "SELECT 1 FROM dolab.alembic_version",
                           "SELECT dolab.apply_deletion('item', gen_random_uuid(), gen_random_uuid())",
                           "SELECT dolab.reconcile_purge_intents(true)",
@@ -105,7 +119,8 @@ def test_the_file_cleaner_can_work_the_queue(db_client):
     admin_enqueue("u/one.jpg")
     with connect(E.FILE_CLEANER) as conn:
         conn.execute("SELECT key, attempts, created_at FROM dolab.pending_file_deletions FOR UPDATE SKIP LOCKED")
-        conn.execute("UPDATE dolab.pending_file_deletions SET attempts = attempts + 1 WHERE key = 'u/one.jpg'")
+        conn.execute("UPDATE dolab.pending_file_deletions SET attempts = attempts + 1, next_try_at = now(), "
+                     "last_error = 'ConnectionError' WHERE key = 'u/one.jpg'")
         conn.execute("DELETE FROM dolab.pending_file_deletions WHERE key = 'u/one.jpg'")
     assert queue_rows() == []
 
@@ -139,6 +154,8 @@ def test_f2_completed_the_job_deletes_what_the_server_could_not(db_client, signu
     assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
     assert queued() == keys and len(stored_files(client, headers)) == 2
     storage_down.undo()  # storage is back
+    assert run_job().claimed == 0  # first due five minutes after the deletion (M1)
+    make_due()
 
     report = run_job()
     assert (report.claimed, report.deleted, report.failed) == (2, 2, 0) and J.exit_code(report) == J.EXIT_OK
@@ -159,12 +176,98 @@ def test_two_runs_never_take_the_same_row(db_client):
     one, two = cleaner_queue(), cleaner_queue()
     try:
         taken = one.claim(10)
-        assert len(taken) == 4 and two.claim(10) == []  # SKIP LOCKED
-        one.rollback()
-        assert len(two.claim(10)) == 4
-    finally:
+        assert len(taken) == 4 and two.claim(10) == []  # leased by the first run
+        # The first run stops without finishing: its rows come back when the lease ends.
         one.close()
+        assert two.claim(10) == []
+        make_due()  # the lease has ended
+        assert sorted(k for k, _ in two.claim(10)) == [f"u/{n}.jpg" for n in range(4)]
+    finally:
         two.close()
+
+
+def test_two_runs_at_the_same_moment_split_the_rows(db_client):
+    """SKIP LOCKED inside the lease statement: two runs leasing at once never get the same row."""
+    for n in range(40):
+        admin_enqueue(f"u/{n:02d}.jpg")
+    import threading
+
+    results: dict[int, list] = {}
+    start = threading.Barrier(2)
+
+    def lease(n):
+        queue = cleaner_queue()
+        try:
+            start.wait()
+            results[n] = [k for k, _ in queue.claim(25)]
+        finally:
+            queue.close()
+
+    threads = [threading.Thread(target=lease, args=(n,)) for n in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not set(results[0]) & set(results[1])
+    assert len(results[0]) + len(results[1]) == 40
+
+
+def test_the_job_holds_no_row_lock_while_it_deletes(db_client):
+    admin_enqueue("u/held.jpg")
+    seen: list[bool] = []
+
+    class Checking:
+        def delete(self, key):
+            # While the job is deleting this file, someone else can lock its row at once.
+            with connect() as admin:
+                admin.execute("SET lock_timeout = '100ms'")
+                seen.append(bool(rows(admin, "SELECT key FROM dolab.pending_file_deletions "
+                                             "WHERE key = %s FOR UPDATE", key)))
+            with connect() as admin:
+                assert value(admin, "SELECT count(*) FROM pg_stat_activity WHERE usename = %s "
+                                    "AND state LIKE 'idle in transaction%%'", E.FILE_CLEANER) == 0
+
+    report = run_job(Checking())
+    assert seen == [True] and report.deleted == 1 and queue_rows() == []
+
+
+def test_m1_the_server_never_waits_long_on_a_locked_queue_row(db_client, signup, monkeypatch, caplog):
+    """If something holds the queue rows, the server's removal gives up after its lock timeout:
+    the request still succeeds quickly, the files are deleted and the rows wait for the job."""
+    import threading
+    import time
+
+    import psycopg
+
+    from tests.test_pg_roles import _conninfo as conninfo
+
+    headers = signup()
+    item_id = new_item(db_client, headers)
+    photo = upload(db_client, headers, item_id).json()
+    keys = photo_keys(photo["id"])
+    holder = psycopg.connect(conninfo(None))  # not autocommit: keeps its locks until rollback
+    real = storage.delete
+    locked = threading.Event()
+
+    def lock_rows_then_delete(key):
+        if not locked.is_set():
+            holder.execute("SELECT key FROM dolab.pending_file_deletions WHERE key = ANY(%s) FOR UPDATE", (keys,))
+            locked.set()
+        real(key)
+
+    monkeypatch.setattr(storage, "delete", lock_rows_then_delete)
+    try:
+        started = time.monotonic()
+        assert db_client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+        took = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+    assert took < 10, took  # 2 s lock timeout, not an open-ended wait
+    assert stored_files(db_client, headers) == [] and queued() == keys
+    assert "queue rows of 2 deleted photo files not removed (OperationalError)" in caplog.text
+    make_due()
+    assert run_job().deleted == 2 and queued() == []  # the job finds the files gone
 
 
 def test_a_failure_is_rescheduled_with_a_wait(db_client):
@@ -207,6 +310,7 @@ def test_f6_completed_an_account_of_50_photos(db_client, signup, storage_down):
     assert db_client.delete("/me", headers=headers).status_code == 204
     assert len(queued()) == 100 and len(storage.list_keys(f"{user_id}/")) == 100
     storage_down.undo()
+    make_due()
     report = run_job(batch=30)
     assert (report.claimed, report.deleted) == (100, 100) and queued() == []
     assert storage.list_keys(f"{user_id}/") == []
@@ -238,5 +342,6 @@ def test_a_deletion_completed_by_reconciliation_has_its_files_queued(db_client, 
     assert report.outcomes["deleted"] == 1
     assert queued() == sorted(keys)  # queued by apply_deletion, inside reconcile_apply's transaction
     assert all(k in storage.list_keys(f"{user_id}/") for k in keys)
+    make_due()
     assert run_job().deleted == len(keys)
     assert not any(k in storage.list_keys(f"{user_id}/") for k in keys) and queued() == []

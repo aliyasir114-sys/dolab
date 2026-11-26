@@ -8,11 +8,15 @@
   and ON CONFLICT DO NOTHING for a key already queued). The server and the reconciliation job both
   go through it, so neither path can commit a deletion without queueing its files. Files are
   deleted from storage only after the commit, by the server (the immediate attempt) and later by
-  the queue job (python -m app.jobs.file_deletions, not scheduled anywhere yet).
+  the queue job (python -m app.jobs.file_deletions, not scheduled anywhere yet). A new row is
+  first due five minutes after the deletion (app.deletion.FIRST_TRY_DELAY on SQLite), so the job never takes a row
+  while the server's immediate attempt is still working on it (review of #60, M1).
 - Privileges (and nothing else on this table):
   dolab_deleter        INSERT (inside apply_deletion);
   dolab_app            DELETE, and SELECT on key only (it removes the rows of files it deleted);
-  dolab_file_cleaner   SELECT, UPDATE, DELETE (the queue job: claims, reschedules, removes rows).
+  dolab_file_cleaner   SELECT and DELETE, and UPDATE on attempts, next_try_at and last_error only
+                       (the queue job leases, reschedules and removes rows; it cannot change a
+                       row's key or created_at; review of #60, M3).
   dolab_file_cleaner has no privilege on any other table and runs no function (bootstrap.sql
   creates the role). The same privileges are listed in dbtools/expected_acl.py.
 """
@@ -91,7 +95,7 @@ BEGIN
     -- The photo files, queued in this transaction (notice #59): one statement for all of them.
     IF v_keys IS NOT NULL THEN
         INSERT INTO dolab.pending_file_deletions (key, attempts, next_try_at, created_at)
-        SELECT k, 0, now(), now() FROM unnest(v_keys) AS k
+        SELECT k, 0, now() + interval '5 minutes', now() FROM unnest(v_keys) AS k
         ON CONFLICT DO NOTHING;
         RETURN QUERY SELECT unnest(v_keys);
     END IF;
@@ -128,7 +132,9 @@ def upgrade() -> None:
     op.execute("GRANT INSERT ON TABLE dolab.pending_file_deletions TO dolab_deleter")
     op.execute("GRANT DELETE ON TABLE dolab.pending_file_deletions TO dolab_app")
     op.execute("GRANT SELECT (key) ON TABLE dolab.pending_file_deletions TO dolab_app")
-    op.execute("GRANT SELECT, UPDATE, DELETE ON TABLE dolab.pending_file_deletions TO dolab_file_cleaner")
+    op.execute("GRANT SELECT, DELETE ON TABLE dolab.pending_file_deletions TO dolab_file_cleaner")
+    op.execute("GRANT UPDATE (attempts, next_try_at, last_error) ON TABLE dolab.pending_file_deletions "
+               "TO dolab_file_cleaner")
     replace_deleter_function(op.execute, APPLY_DELETION, APPLY_SIGNATURE, ["dolab_app"])
 
 

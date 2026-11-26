@@ -63,7 +63,7 @@ TABLES = {
     "deletion_intents": {APP: _APPEND, DELETER: _DEL},
     # Migration 0007 (notice #59): queued by apply_deletion, removed by the API once it deleted the
     # file (SELECT on key only, in COLUMNS), claimed and rescheduled by the queue job.
-    "pending_file_deletions": {APP: _DEL, DELETER: {"INSERT"}, FILE_CLEANER: {"SELECT", "UPDATE", "DELETE"}},
+    "pending_file_deletions": {APP: _DEL, DELETER: {"INSERT"}, FILE_CLEANER: {"SELECT", "DELETE"}},
     # Migration 0005: written by the deleter functions only; no operating role reads them.
     "reconciled_entries": {DELETER: {"INSERT"}},
     "audit_log": {DELETER: {"INSERT"}},
@@ -94,6 +94,9 @@ COLUMNS: dict[tuple[str, str], dict[str, set[str]]] = {
 COLUMNS[("users", "updated_at")] = {DELETER: {"UPDATE"}}
 # Migration 0007: the API reads only the key of a queued file, to remove its row.
 COLUMNS[("pending_file_deletions", "key")] = {APP: {"SELECT"}}
+# The queue job may change only these (review of #60, M3): never a row's key or created_at.
+for _column in ("attempts", "next_try_at", "last_error"):
+    COLUMNS[("pending_file_deletions", _column)] = {FILE_CLEANER: {"UPDATE"}}
 
 # Sequences, functions and standalone types in dolab. Functions: the deleter functions of
 # migrations 0005 and 0006, owned by dolab_deleter; nobody else may run them.

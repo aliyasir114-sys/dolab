@@ -9,16 +9,24 @@ to be enabled until the queue job is scheduled, or the orphan job is.
 
 What it may do, and nothing more:
 - connect to PostgreSQL as dolab_file_cleaner, whose only table is dolab.pending_file_deletions
-  (SELECT, UPDATE, DELETE) and which runs no function;
+  (SELECT and DELETE; UPDATE on attempts, next_try_at and last_error only) and which runs no
+  function;
 - delete objects in the photo bucket (production: an identity that may only DeleteObject there).
   It never reads, lists or writes files. It refuses to start if a signing key or the API's JWT
   secret is in its environment, or if its bucket is the ledger bucket.
 
-A run: claim due rows in batches (FOR UPDATE SKIP LOCKED, so two runs never take the same row),
-delete each file (a file already gone counts as deleted), remove the row, or reschedule it with
-a growing wait (10 minutes, doubling, at most 6 hours) and the error's class name. A batch in
-which every file failed means storage is down: the run stops. Then it counts rows queued for more
-than 24 hours and alerts on them. Safe to run again or twice at once.
+A run: lease due rows in batches, then delete each file (a file already gone counts as deleted)
+and remove its row, or reschedule it with a growing wait (10 minutes, doubling, at most 6 hours)
+and the error's class name. A batch in which every file failed means storage is down: the run
+stops. Then it counts rows queued for more than 24 hours and alerts on them.
+
+Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR UPDATE SKIP
+LOCKED, so two runs never take the same row) and moves their next_try_at LEASE ahead, and commits.
+No transaction stays open and no row lock is held while files are deleted, so the server's own
+removal of queue rows never waits on the job. A run that stops part-way leaves its leased rows
+to come due again when the lease ends; deleting a file twice is harmless. Rows are first due
+five minutes after the deletion, so the job never takes one the server is still working on.
+Safe to run again or twice at once.
 
 --dry-run changes nothing: it counts the rows due and the rows older than 24 hours.
 Logs carry counts only, never keys (a key carries the user id).
@@ -44,6 +52,7 @@ BATCH = 100
 MAX_BATCHES = 50  # at most 5000 files a run; the next run takes the rest
 FIRST_WAIT = 600  # seconds
 MAX_WAIT = 6 * 3600
+LEASE = 30 * 60  # seconds a leased batch is kept from other runs
 STALE_HOURS = 24
 ENVIRONMENTS = ("development", "test", "staging", "production")
 EXIT_OK, EXIT_PROBLEMS, EXIT_REFUSED = 0, 1, 4
@@ -163,10 +172,6 @@ class Queue(Protocol):
 
     def failed(self, key: str, attempts: int, error: str) -> None: ...
 
-    def commit(self) -> None: ...
-
-    def rollback(self) -> None: ...
-
     def due(self) -> int: ...
 
     def stale(self) -> int: ...
@@ -179,17 +184,21 @@ class PgQueue:
         import psycopg
 
         url = url.replace("postgresql+psycopg://", "postgresql://", 1)
-        self.conn = psycopg.connect(url, application_name="dolab-file-deletions")
+        # Every statement commits on its own: no transaction stays open while files are deleted.
+        self.conn = psycopg.connect(url, autocommit=True, application_name="dolab-file-deletions")
         current, session = self.conn.execute("SELECT current_user, session_user").fetchone()
-        self.conn.rollback()
         if current != ROLE or session != ROLE:
             self.conn.close()
             raise Refused(f"the job must connect as {ROLE}, not {session}")
 
     def claim(self, limit: int) -> list[tuple[str, int]]:
-        return self.conn.execute(
-            "SELECT key, attempts FROM dolab.pending_file_deletions WHERE next_try_at <= now() "
-            "ORDER BY next_try_at, key LIMIT %s FOR UPDATE SKIP LOCKED", (limit,)).fetchall()
+        """Lease up to `limit` due rows: one statement, committed at once."""
+        rows = self.conn.execute(
+            "UPDATE dolab.pending_file_deletions q SET next_try_at = now() + make_interval(secs => %s) "
+            "FROM (SELECT key FROM dolab.pending_file_deletions WHERE next_try_at <= now() "
+            "      ORDER BY next_try_at, key LIMIT %s FOR UPDATE SKIP LOCKED) due "
+            "WHERE q.key = due.key RETURNING q.key, q.attempts", (LEASE, limit)).fetchall()
+        return sorted(rows)
 
     def done(self, key: str) -> None:
         self.conn.execute("DELETE FROM dolab.pending_file_deletions WHERE key = %s", (key,))
@@ -199,12 +208,6 @@ class PgQueue:
             "UPDATE dolab.pending_file_deletions SET attempts = attempts + 1, "
             "next_try_at = now() + make_interval(secs => %s), last_error = %s WHERE key = %s",
             (wait_after(attempts), error[:40], key))
-
-    def commit(self) -> None:
-        self.conn.commit()
-
-    def rollback(self) -> None:
-        self.conn.rollback()
 
     def due(self) -> int:
         return self.conn.execute(
@@ -248,12 +251,10 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
     report = Report(dry_run=dry_run)
     if dry_run:
         report.due, report.stale = queue.due(), queue.stale()
-        queue.rollback()
         return _finish(report)
     for _ in range(max_batches):
         rows = queue.claim(batch)
         if not rows:
-            queue.rollback()
             break
         report.claimed += len(rows)
         failed_here = 0
@@ -266,13 +267,11 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
                 continue
             queue.done(key)
             report.deleted += 1
-        queue.commit()
         report.failed += failed_here
         if failed_here == len(rows):
             report.stopped_early = True
             break
     report.stale = queue.stale()
-    queue.rollback()
     return _finish(report)
 
 
@@ -302,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_REFUSED
     try:
         return exit_code(run(queue, build_deleter(config), dry_run=args.dry_run))
-    except Exception as error:  # noqa: BLE001 - the open batch rolls back; its rows are tried again next run
+    except Exception as error:  # noqa: BLE001 - leased rows come due again when their lease ends
         log.error("ALERT the run stopped (%s)", type(error).__name__)
         return EXIT_PROBLEMS
     finally:
