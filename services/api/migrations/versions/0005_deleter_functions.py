@@ -55,7 +55,7 @@ BEGIN
             RAISE EXCEPTION 'apply_deletion: no such item for this user' USING ERRCODE = 'no_data_found';
         END IF;
         RETURN QUERY
-            SELECT k.key FROM dolab.item_photos p
+            SELECT k.key::text FROM dolab.item_photos p
             CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
             WHERE p.item_id = v_entity;
         DELETE FROM dolab.wear_logs WHERE item_id = v_entity;
@@ -68,7 +68,7 @@ BEGIN
             RAISE EXCEPTION 'apply_deletion: no such photo for this user' USING ERRCODE = 'no_data_found';
         END IF;
         RETURN QUERY
-            SELECT k.key FROM dolab.item_photos p
+            SELECT k.key::text FROM dolab.item_photos p
             CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
             WHERE p.id = v_entity;
         DELETE FROM dolab.item_photos WHERE id = v_entity;
@@ -77,7 +77,7 @@ BEGIN
             RAISE EXCEPTION 'apply_deletion: no such account' USING ERRCODE = 'no_data_found';
         END IF;
         RETURN QUERY
-            SELECT k.key FROM dolab.item_photos p
+            SELECT k.key::text FROM dolab.item_photos p
             CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
             WHERE p.user_id = v_user;
         DELETE FROM dolab.item_photos WHERE user_id = v_user;
