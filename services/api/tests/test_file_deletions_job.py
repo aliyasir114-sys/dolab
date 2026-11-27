@@ -251,6 +251,7 @@ class Unreachable(Exception):
 def test_a_connection_failure_is_reported_not_raised(monkeypatch, caplog, error):
     monkeypatch.setenv("DOLAB_ENV", "test")
     monkeypatch.setenv("DOLAB_FILE_CLEANER_DATABASE_URL", "postgresql://dolab_file_cleaner:s3cret-pw@db.example/dolab")
+    monkeypatch.setenv("DOLAB_STORAGE", "local")  # the configuration is valid: only the connection fails
     for name in ("DOLAB_JWT_SECRET", "DOLAB_LEDGER_SIGNING_KEY", "DOLAB_S3_BUCKET", "DOLAB_LEDGER_BUCKET"):
         monkeypatch.delenv(name, raising=False)
     built = []
