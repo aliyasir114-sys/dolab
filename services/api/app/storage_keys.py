@@ -10,6 +10,16 @@ class StorageUnavailable(RuntimeError):
     """The storage could not be reached or refused the request. Callers answer 503 or retry later."""
 
 
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+# The only keys the server makes for photos: "<user id>/<photo id>_original.<ext>" and
+# "<user id>/<photo id>_thumb.jpg". The orphan job and the file deletion job touch nothing else.
+PHOTO_KEY = re.compile(rf"^{_UUID}/{_UUID}_(original\.(jpg|png|webp)|thumb\.jpg)$")
+
+
+def is_photo_key(key: str) -> bool:
+    return bool(PHOTO_KEY.match(key or ""))
+
+
 def check_key(key: str) -> str:
     if len(key) > 512 or not _KEY.match(key) or ".." in key.split("/"):
         raise ValueError("invalid storage key")

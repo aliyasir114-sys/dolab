@@ -5,7 +5,7 @@ import pytest
 from app.jobs import file_deletions as J
 
 DB_URL = "postgresql+psycopg://dolab_file_cleaner@db.example/dolab"
-KEY = "6f1c0d2e-0000-4000-8000-000000000001/abc_original.jpg"
+KEY = "6f1c0d2e-0000-4000-8000-000000000001/6f1c0d2e-0000-4000-8000-0000000000aa_original.jpg"
 
 
 def env(**values):
@@ -102,8 +102,8 @@ class FakeQueue:
         self.calls.append(("done", key))
         del self.rows[key]
 
-    def failed(self, key, attempts, error):
-        self.calls.append(("failed", key, attempts, error))
+    def failed(self, key, attempts, error, wait=None):
+        self.calls.append(("failed", key, attempts, error) + ((wait,) if wait is not None else ()))
         self.rows[key] = attempts + 1
 
     def commit(self):
@@ -131,7 +131,10 @@ class FakeDeleter:
 
 
 def keys(n):
-    return [f"u{i:03d}/p_original.jpg" for i in range(n)]
+    """Photo keys as the server makes them."""
+    user = "6f1c0d2e-0000-4000-8000-000000000001"
+    return [f"{user}/6f1c0d2e-0000-4000-8000-{i:012d}_{'original.jpg' if i % 2 else 'thumb.jpg'}"
+            for i in range(n)]
 
 
 def test_deleted_files_lose_their_rows():
@@ -157,11 +160,55 @@ def test_a_batch_that_fails_entirely_stops_the_run():
     assert report.claimed == 2 and report.stopped_early and len(queue.rows) == 6
 
 
-def test_an_invalid_key_is_never_deleted():
-    queue = FakeQueue({"../etc/passwd": 0})
-    deleter = J.LocalFileDeleter("/nonexistent-media")
+INVALID = ["../etc/passwd", "/etc/passwd", "2026/01/02/6f1c0d2e-0000-4000-8000-000000000001.json",
+           "u/x.jpg", "6f1c0d2e-0000-4000-8000-000000000001/../../x_original.jpg", "", "a" * 600,
+           "6f1c0d2e-0000-4000-8000-000000000001/6f1c0d2e-0000-4000-8000-0000000000aa_original.exe"]
+
+
+class RecordingDeleter(FakeDeleter):
+    def __init__(self, fail=()):
+        super().__init__(fail)
+        self.asked = []
+
+    def delete(self, key):
+        self.asked.append(key)
+        super().delete(key)
+
+
+@pytest.mark.parametrize("bad", INVALID)
+def test_an_invalid_key_is_never_sent_to_storage(bad):
+    queue, deleter = FakeQueue({bad: 0}), RecordingDeleter()
     report = J.run(queue, deleter)
-    assert report.failed == 1 and ("failed", "../etc/passwd", 0, "invalid_key") in queue.calls
+    assert deleter.asked == [] and report.invalid == 1 and report.failed == 0
+    assert ("failed", bad, 0, "invalid_key", J.MAX_WAIT) in queue.calls
+    assert queue.rows == {bad: 1}  # kept, not dropped
+    assert not report.stopped_early and J.exit_code(report) == J.EXIT_PROBLEMS
+
+
+def test_a_mixed_batch_deletes_the_good_files():
+    good = keys(4)
+    rows = {k: 0 for k in good} | {k: 0 for k in INVALID[:4]}
+    queue, deleter = FakeQueue(rows), RecordingDeleter()
+    report = J.run(queue, deleter, batch=8)
+    assert sorted(deleter.asked) == sorted(good) and report.deleted == 4
+    assert report.invalid == 4 and set(queue.rows) == set(INVALID[:4])
+    assert not report.stopped_early
+
+
+def test_a_batch_of_invalid_keys_does_not_stop_the_run():
+    rows = {k: 0 for k in INVALID[:3]} | {k: 0 for k in keys(3)}
+    queue, deleter = FakeQueue(rows), RecordingDeleter()
+    # Sorted, the invalid keys fill the first batch; the run must go on to the good ones.
+    report = J.run(queue, deleter, batch=3)
+    assert report.deleted == 3 and report.invalid == 3 and not report.stopped_early
+
+
+def test_storage_down_still_stops_the_run_with_invalid_keys_around():
+    good = keys(4)
+    rows = {k: 0 for k in good} | {INVALID[0]: 0}
+    queue = FakeQueue(rows)
+    report = J.run(queue, RecordingDeleter(fail=set(good)), batch=10)
+    assert report.failed == 4 and report.invalid == 1 and report.stopped_early
 
 
 def test_rows_older_than_24_hours_alert():
@@ -185,6 +232,40 @@ def test_the_run_is_bounded():
 def test_waits_grow_and_are_capped():
     assert [J.wait_after(a) for a in range(7)] == [600, 1200, 2400, 4800, 9600, 19200, 21600]
     assert J.wait_after(1000) == J.MAX_WAIT
+
+
+# ------------------------------------------------------------------ the database cannot be reached
+
+class Unreachable(Exception):
+    """Stands for psycopg.OperationalError and its kind."""
+
+
+@pytest.mark.parametrize("error", [
+    Unreachable('connection failed: FATAL: password authentication failed for user "dolab_file_cleaner"'),
+    Unreachable('FATAL: database "nope" does not exist'),
+    Unreachable("connection refused"),
+    Unreachable('FATAL: too many connections for role "dolab_file_cleaner"'),
+    TimeoutError("timed out"),
+    OSError("network unreachable"),
+])
+def test_a_connection_failure_is_reported_not_raised(monkeypatch, caplog, error):
+    monkeypatch.setenv("DOLAB_ENV", "test")
+    monkeypatch.setenv("DOLAB_FILE_CLEANER_DATABASE_URL", "postgresql://dolab_file_cleaner:s3cret-pw@db.example/dolab")
+    for name in ("DOLAB_JWT_SECRET", "DOLAB_LEDGER_SIGNING_KEY", "DOLAB_S3_BUCKET", "DOLAB_LEDGER_BUCKET"):
+        monkeypatch.delenv(name, raising=False)
+    built = []
+
+    def failing_queue(url):
+        raise error
+
+    monkeypatch.setattr(J, "PgQueue", failing_queue)
+    monkeypatch.setattr(J, "build_deleter", lambda config: built.append(config))
+    caplog.set_level("INFO")
+    assert J.main([]) == J.EXIT_NO_DATABASE
+    assert built == []  # nothing else was started
+    assert f"could not connect to the database ({type(error).__name__})" in caplog.text
+    assert "s3cret-pw" not in caplog.text and "Traceback" not in caplog.text
+    assert "db.example" not in caplog.text and str(error) not in caplog.text
 
 
 def test_logs_carry_no_keys(caplog):

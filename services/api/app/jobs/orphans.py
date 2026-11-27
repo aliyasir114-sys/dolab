@@ -22,7 +22,6 @@ Safety rules:
 """
 import argparse
 import logging
-import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -35,11 +34,10 @@ from .. import clock
 from ..db import SessionLocal
 from ..models import ItemPhoto
 from ..storage import Storage, StorageUnavailable, storage as default_storage
+from ..storage_keys import PHOTO_KEY  # shared with the file deletion job
 
 log = logging.getLogger("dolab.jobs.orphans")
 
-_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-PHOTO_KEY = re.compile(rf"^{_UUID}/{_UUID}_(original\.(jpg|png|webp)|thumb\.jpg)$")
 DEFAULT_BATCH = 500
 DEFAULT_MIN_AGE = timedelta(minutes=60)
 # Keys per database query: keeps each IN list small.

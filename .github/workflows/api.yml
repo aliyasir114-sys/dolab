@@ -98,6 +98,10 @@ jobs:
       # The file deletion job's user (throwaway, CI MinIO only).
       DOLAB_TEST_FILE_CLEANER_KEY: dolab-ci-file-cleaner
       DOLAB_TEST_FILE_CLEANER_SECRET: ci-cleaner-not-a-secret
+      # A second photo bucket and its own cleaner user: the policy follows the configured bucket.
+      DOLAB_TEST_ALT_BUCKET: dolab-ci-alt
+      DOLAB_TEST_FILE_CLEANER_ALT_KEY: dolab-ci-file-cleaner-alt
+      DOLAB_TEST_FILE_CLEANER_ALT_SECRET: ci-cleaner-alt-not-a-secret
     defaults:
       run:
         working-directory: services/api
@@ -120,7 +124,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live && break; sleep 1; done
           curl -fsS http://localhost:9000/minio/health/live
           docker image inspect cgr.dev/chainguard/minio:latest --format 'MinIO image {{index .RepoDigests 0}}'
-          python -c "import boto3; c = boto3.client('s3', endpoint_url='http://localhost:9000'); c.create_bucket(Bucket='dolab-ci'); c.create_bucket(Bucket='dolab-ci-ledger')"
+          python -c "import boto3; c = boto3.client('s3', endpoint_url='http://localhost:9000'); c.create_bucket(Bucket='dolab-ci'); c.create_bucket(Bucket='dolab-ci-ledger'); c.create_bucket(Bucket='dolab-ci-alt')"
       - name: Restricted storage identities for the jobs (mc, CI only)
         env:
           # Chainguard's build of the MinIO client: the same supplier as the MinIO server above.
@@ -148,10 +152,25 @@ jobs:
           mc admin user add ci "$DOLAB_TEST_LEDGER_READER_KEY" "$DOLAB_TEST_LEDGER_READER_SECRET"
           mc admin policy create ci dolab-ledger-read /ops/ledger-reader-policy.json
           mc admin policy attach ci dolab-ledger-read --user "$DOLAB_TEST_LEDGER_READER_KEY"
-          # The file deletion job's user: DeleteObject in the photo bucket only (notice #59).
+          # The file deletion job's users: DeleteObject in one photo bucket only (notice #59). The
+          # policy is rendered per bucket from ops/file-cleaner-policy.template.json, as it is for
+          # staging and production; a second bucket proves it follows the configured name.
+          mkdir -p "$RUNNER_TEMP/policies"
+          python ops/render_policy.py --photo-bucket "$DOLAB_S3_BUCKET" --ledger-bucket "$DOLAB_LEDGER_BUCKET" \
+            > "$RUNNER_TEMP/policies/file-clean.json"
+          python ops/render_policy.py --photo-bucket "$DOLAB_TEST_ALT_BUCKET" --ledger-bucket "$DOLAB_LEDGER_BUCKET" \
+            > "$RUNNER_TEMP/policies/file-clean-alt.json"
+          policy() {
+            docker run --rm --network host -v "$RUNNER_TEMP/policies:/policies:ro" \
+              -e MC_HOST_ci="http://$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY@localhost:9000" \
+              "$MC_IMAGE" --config-dir /tmp/mc "$@"
+          }
           mc admin user add ci "$DOLAB_TEST_FILE_CLEANER_KEY" "$DOLAB_TEST_FILE_CLEANER_SECRET"
-          mc admin policy create ci dolab-file-clean /ops/file-cleaner-policy.json
+          policy admin policy create ci dolab-file-clean /policies/file-clean.json
           mc admin policy attach ci dolab-file-clean --user "$DOLAB_TEST_FILE_CLEANER_KEY"
+          mc admin user add ci "$DOLAB_TEST_FILE_CLEANER_ALT_KEY" "$DOLAB_TEST_FILE_CLEANER_ALT_SECRET"
+          policy admin policy create ci dolab-file-clean-alt /policies/file-clean-alt.json
+          mc admin policy attach ci dolab-file-clean-alt --user "$DOLAB_TEST_FILE_CLEANER_ALT_KEY"
       - run: pytest -q -rs
       - name: MinIO log
         if: failure()

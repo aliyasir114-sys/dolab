@@ -17,8 +17,14 @@ What it may do, and nothing more:
 
 A run: lease due rows in batches, then delete each file (a file already gone counts as deleted)
 and remove its row, or reschedule it with a growing wait (10 minutes, doubling, at most 6 hours)
-and the error's class name. A batch in which every file failed means storage is down: the run
-stops. Then it counts rows queued for more than 24 hours and alerts on them.
+and the error's class name. A batch in which every file failed in storage means storage is
+down: the run stops. Then it counts rows queued for more than 24 hours and alerts on them.
+
+Invalid keys (review of #60): a row whose key is not a photo key the server makes
+("<user id>/<photo id>_original.<ext>" or "_thumb.jpg") is never sent to storage, so nothing
+outside DOLAB's photo files can be deleted. It is not a storage failure and does not stop the
+batch: it stays queued with last_error "invalid_key", is put back the longest wait (6 hours),
+and makes the run exit 1 so someone looks at it. It is never dropped.
 
 Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR UPDATE SKIP
 LOCKED, so two runs never take the same row) and moves their next_try_at LEASE ahead, and commits.
@@ -31,8 +37,10 @@ Safe to run again or twice at once.
 --dry-run changes nothing: it counts the rows due and the rows older than 24 hours.
 Logs carry counts only, never keys (a key carries the user id).
 
-Exit codes: 0 done; 1 some files failed or a row is older than 24 hours (alert); 4 refused to
-start (configuration).
+Exit codes: 0 done; 1 some files failed, a key was invalid, or a row is older than 24 hours
+(alert); 4 refused to start (configuration); 5 the database could not be reached (wrong
+credentials, unknown database, no server, connection limit reached): nothing was read or
+changed. Only the error's class is logged, never the connection string.
 """
 import argparse
 import logging
@@ -43,7 +51,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
-from ..storage_keys import check_key
+from ..storage_keys import check_key, is_photo_key
 
 log = logging.getLogger("dolab.jobs.file_deletions")
 
@@ -55,7 +63,8 @@ MAX_WAIT = 6 * 3600
 LEASE = 30 * 60  # seconds a leased batch is kept from other runs
 STALE_HOURS = 24
 ENVIRONMENTS = ("development", "test", "staging", "production")
-EXIT_OK, EXIT_PROBLEMS, EXIT_REFUSED = 0, 1, 4
+EXIT_OK, EXIT_PROBLEMS, EXIT_REFUSED, EXIT_NO_DATABASE = 0, 1, 4, 5
+CONNECT_TIMEOUT = 10  # seconds
 
 
 class Refused(RuntimeError):
@@ -170,7 +179,7 @@ class Queue(Protocol):
 
     def done(self, key: str) -> None: ...
 
-    def failed(self, key: str, attempts: int, error: str) -> None: ...
+    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> None: ...
 
     def due(self) -> int: ...
 
@@ -185,7 +194,8 @@ class PgQueue:
 
         url = url.replace("postgresql+psycopg://", "postgresql://", 1)
         # Every statement commits on its own: no transaction stays open while files are deleted.
-        self.conn = psycopg.connect(url, autocommit=True, application_name="dolab-file-deletions")
+        self.conn = psycopg.connect(url, autocommit=True, application_name="dolab-file-deletions",
+                                    connect_timeout=CONNECT_TIMEOUT)
         current, session = self.conn.execute("SELECT current_user, session_user").fetchone()
         if current != ROLE or session != ROLE:
             self.conn.close()
@@ -203,11 +213,11 @@ class PgQueue:
     def done(self, key: str) -> None:
         self.conn.execute("DELETE FROM dolab.pending_file_deletions WHERE key = %s", (key,))
 
-    def failed(self, key: str, attempts: int, error: str) -> None:
+    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> None:
         self.conn.execute(
             "UPDATE dolab.pending_file_deletions SET attempts = attempts + 1, "
             "next_try_at = now() + make_interval(secs => %s), last_error = %s WHERE key = %s",
-            (wait_after(attempts), error[:40], key))
+            (wait_after(attempts) if wait is None else wait, error[:40], key))
 
     def due(self) -> int:
         return self.conn.execute(
@@ -229,19 +239,20 @@ class Report:
     dry_run: bool = False
     claimed: int = 0
     deleted: int = 0
-    failed: int = 0
+    failed: int = 0  # storage failures
+    invalid: int = 0  # keys that are not photo keys: never sent to storage
     stopped_early: bool = False  # a whole batch failed: storage looks down
     due: int | None = None  # dry run only
     stale: int = 0
 
     @property
     def clean(self) -> bool:
-        return self.failed == 0 and self.stale == 0
+        return self.failed == 0 and self.invalid == 0 and self.stale == 0
 
     def summary(self) -> str:
         if self.dry_run:
             return f"dry run: {self.due} files due, {self.stale} queued for more than {STALE_HOURS} hours"
-        return (f"claimed {self.claimed}, deleted {self.deleted}, failed {self.failed}"
+        return (f"claimed {self.claimed}, deleted {self.deleted}, failed {self.failed}, invalid keys {self.invalid}"
                 f"{' (stopped: storage looks down)' if self.stopped_early else ''}; "
                 f"{self.stale} queued for more than {STALE_HOURS} hours")
 
@@ -257,8 +268,14 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
         if not rows:
             break
         report.claimed += len(rows)
-        failed_here = 0
+        tried = failed_here = 0
         for key, attempts in rows:
+            if not is_photo_key(key):
+                # Never sent to storage; kept, set aside for the longest wait, and reported.
+                queue.failed(key, attempts, "invalid_key", wait=MAX_WAIT)
+                report.invalid += 1
+                continue
+            tried += 1
             try:
                 deleter.delete(key)
             except Exception as error:  # noqa: BLE001 - one file must not stop the others
@@ -268,8 +285,8 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
             queue.done(key)
             report.deleted += 1
         report.failed += failed_here
-        if failed_here == len(rows):
-            report.stopped_early = True
+        if tried and failed_here == tried:
+            report.stopped_early = True  # every file sent to storage failed: storage is down
             break
     report.stale = queue.stale()
     return _finish(report)
@@ -278,6 +295,8 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
 def _finish(report: Report) -> Report:
     if report.failed:
         log.error("ALERT %d photo files could not be deleted; rescheduled", report.failed)
+    if report.invalid:
+        log.error("ALERT %d queued keys are not photo keys; not deleted, kept in the queue", report.invalid)
     if report.stale:
         log.error("ALERT %d photo files queued for more than %d hours", report.stale, STALE_HOURS)
     log.info(report.summary())
@@ -299,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     except Refused as error:
         log.error("refused to start: %s", error)
         return EXIT_REFUSED
+    except Exception as error:  # noqa: BLE001 - the connection failed: nothing read, nothing changed
+        # Only the class: a driver's message can carry the host, user and database names.
+        log.error("ALERT could not connect to the database (%s); nothing done", type(error).__name__)
+        return EXIT_NO_DATABASE
     try:
         return exit_code(run(queue, build_deleter(config), dry_run=args.dry_run))
     except Exception as error:  # noqa: BLE001 - leased rows come due again when their lease ends

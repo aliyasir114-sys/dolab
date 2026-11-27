@@ -17,6 +17,7 @@
   dolab_file_cleaner   SELECT and DELETE, and UPDATE on attempts, next_try_at and last_error only
                        (the queue job leases, reschedules and removes rows; it cannot change a
                        row's key or created_at; review of #60, M3).
+  The downgrade refuses while the queue holds any row, so queued files are never dropped.
   dolab_file_cleaner has no privilege on any other table and runs no function (bootstrap.sql
   creates the role). The same privileges are listed in dbtools/expected_acl.py.
 """
@@ -138,7 +139,19 @@ def upgrade() -> None:
     replace_deleter_function(op.execute, APPLY_DELETION, APPLY_SIGNATURE, ["dolab_app"])
 
 
+class QueueNotEmpty(RuntimeError):
+    """The downgrade would drop files still waiting to be deleted from storage."""
+
+
 def downgrade() -> None:
+    # Never drop queued files silently (review of #60): each row is a photo file whose record is
+    # gone but which may still be in storage. Refuse, and leave the database exactly as it is.
+    pending = op.get_bind().execute(sa.text("SELECT count(*) FROM dolab.pending_file_deletions")).scalar()
+    if pending:
+        raise QueueNotEmpty(
+            f"refusing to downgrade 0007: {pending} photo files are still queued in "
+            "dolab.pending_file_deletions. Process them first (python -m app.jobs.file_deletions, until "
+            "its --dry-run reports nothing due and the queue is empty), then downgrade again.")
     replace_deleter_function(op.execute, APPLY_DELETION_0005, APPLY_SIGNATURE, ["dolab_app"])
     op.drop_index("ix_pending_file_deletions_next_try_at", table_name="pending_file_deletions", schema="dolab")
     op.drop_table("pending_file_deletions", schema="dolab")

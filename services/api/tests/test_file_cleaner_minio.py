@@ -1,6 +1,7 @@
-"""The file deletion job's storage identity on MinIO (notice #59, decision ط2): a user made in CI
-with mc and ops/file-cleaner-policy.json. It can delete objects in the photo bucket, and nothing
-else: no reading, listing or writing there, nothing in the ledger bucket."""
+"""The file deletion job's storage identity on MinIO (notice #59, decision ط2): users made in CI
+with mc and a policy rendered per bucket from ops/file-cleaner-policy.template.json (review of
+#60). Each can delete objects in its own photo bucket, and nothing else: no reading, listing or
+writing there, nothing in the ledger bucket, nothing in another photo bucket."""
 import os
 import uuid
 
@@ -14,6 +15,7 @@ pytestmark = pytest.mark.skipif(not CLEANER_KEY, reason="needs MinIO with the fi
 PHOTOS = os.getenv("DOLAB_S3_BUCKET", "dolab-ci")
 LEDGER = os.getenv("DOLAB_LEDGER_BUCKET", "dolab-ci-ledger")
 ENDPOINT = os.getenv("DOLAB_S3_ENDPOINT_URL", "http://localhost:9000")
+ALT = os.getenv("DOLAB_TEST_ALT_BUCKET", "dolab-ci-alt")
 
 
 def client(key=None, secret=None):
@@ -73,3 +75,25 @@ def test_the_file_cleaner_can_do_nothing_else(cleaner):
     assert denied(lambda: cleaner.delete_bucket(Bucket=PHOTOS))
     assert exists(admin, LEDGER, entry)
     assert admin.get_object(Bucket=PHOTOS, Key=photo)["Body"].read() == b"jpeg"
+
+
+def test_the_policy_follows_the_configured_bucket():
+    """Rendered for another bucket name, the policy works there, and only there."""
+    admin = client()
+    alt = client(os.environ["DOLAB_TEST_FILE_CLEANER_ALT_KEY"], os.environ["DOLAB_TEST_FILE_CLEANER_ALT_SECRET"])
+    main = client(CLEANER_KEY, os.environ["DOLAB_TEST_FILE_CLEANER_SECRET"])
+    key = f"{uuid.uuid4()}/{uuid.uuid4()}_original.jpg"
+    for bucket in (PHOTOS, ALT):
+        admin.put_object(Bucket=bucket, Key=key, Body=b"jpeg")
+    # Each identity is refused the other's bucket, and the object there stays.
+    assert denied(lambda: alt.delete_object(Bucket=PHOTOS, Key=key))
+    assert denied(lambda: main.delete_object(Bucket=ALT, Key=key))
+    assert exists(admin, PHOTOS, key) and exists(admin, ALT, key)
+    # And may delete in its own.
+    J.S3FileDeleter(ALT, alt).delete(key)
+    J.S3FileDeleter(PHOTOS, main).delete(key)
+    assert not exists(admin, ALT, key) and not exists(admin, PHOTOS, key)
+    for call in (lambda: alt.get_object(Bucket=ALT, Key=key), lambda: alt.list_objects_v2(Bucket=ALT),
+                 lambda: alt.put_object(Bucket=ALT, Key=key, Body=b"x"),
+                 lambda: alt.delete_object(Bucket=LEDGER, Key=key)):
+        assert denied(call)

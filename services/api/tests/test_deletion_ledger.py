@@ -419,6 +419,30 @@ def test_an_entry_is_never_replaced(client, tmp_path):
         delattr(writer, method)
 
 
+def test_local_entries_are_created_private_and_never_overwritten(tmp_path, monkeypatch):
+    """Every platform: the entry is created with mode 0600 and O_CREAT | O_EXCL, and a second
+    write of the same name is refused. (Windows ignores POSIX mode bits; there the folder's ACL
+    decides who can read it, and the local ledger is for development only: staging and
+    production require the S3 ledger.)"""
+    opened = []
+    real_open = os.open
+
+    def recording_open(path, flags, mode=0o777, *args, **kwargs):
+        opened.append((flags, mode))
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(ledger_store.os, "open", recording_open)
+    writer = ledger_store.LocalLedger(str(tmp_path))
+    writer.put("2026/11/25/x.json", b"{}")
+    ((flags, mode),) = opened
+    assert mode == 0o600
+    assert flags & os.O_CREAT and flags & os.O_EXCL and flags & os.O_WRONLY
+    with pytest.raises(ledger_store.LedgerEntryExists):
+        writer.put("2026/11/25/x.json", b"{\"other\": 1}")
+    assert (tmp_path / "2026/11/25/x.json").read_bytes() == b"{}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits; Windows is covered by the test above")
 def test_local_entries_are_private_files(tmp_path):
     writer = ledger_store.LocalLedger(str(tmp_path))
     writer.put("2026/11/25/x.json", b"{}")

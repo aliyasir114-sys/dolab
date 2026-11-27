@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from tests.test_pg_roles import ADMIN_URL, E, PRIVILEGES, _conninfo, connect, denied, rows, value
+from tests.test_pg_roles import ADMIN_URL, E, PRIVILEGES, _conninfo, connect, denied, rows, scratch_db, value  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="needs PostgreSQL (DOLAB_TEST_PG_ADMIN_URL)")
 
@@ -37,6 +37,11 @@ def run_job(deleter=None, **kwargs) -> J.Report:
 def queue_rows():
     with connect() as admin:
         return rows(admin, "SELECT key, attempts, last_error FROM dolab.pending_file_deletions ORDER BY key")
+
+
+def photo_key(kind: str = "original.jpg") -> str:
+    """A key shaped like the server's photo keys (the job touches no other)."""
+    return f"{uuid.uuid4()}/{uuid.uuid4()}_{kind}"
 
 
 def make_due():
@@ -163,7 +168,7 @@ def test_f2_completed_the_job_deletes_what_the_server_could_not(db_client, signu
 
 
 def test_f5_running_twice_and_a_file_already_gone(db_client):
-    admin_enqueue(f"{uuid.uuid4()}/gone_original.jpg")  # no such file: a 404 is a success
+    admin_enqueue(photo_key())  # no such file: a 404 is a success
     first = run_job()
     second = run_job()
     assert (first.deleted, second.claimed) == (1, 0) and queue_rows() == []
@@ -213,7 +218,7 @@ def test_two_runs_at_the_same_moment_split_the_rows(db_client):
 
 
 def test_the_job_holds_no_row_lock_while_it_deletes(db_client):
-    admin_enqueue("u/held.jpg")
+    admin_enqueue(photo_key())
     seen: list[bool] = []
 
     class Checking:
@@ -271,7 +276,8 @@ def test_m1_the_server_never_waits_long_on_a_locked_queue_row(db_client, signup,
 
 
 def test_a_failure_is_rescheduled_with_a_wait(db_client):
-    admin_enqueue("u/stuck.jpg")
+    stuck = photo_key()
+    admin_enqueue(stuck)
 
     class Down:
         def delete(self, key):
@@ -279,7 +285,7 @@ def test_a_failure_is_rescheduled_with_a_wait(db_client):
 
     report = run_job(Down())
     assert report.failed == 1 and J.exit_code(report) == J.EXIT_PROBLEMS
-    assert queue_rows() == [("u/stuck.jpg", 1, "ConnectionError")]
+    assert queue_rows() == [(stuck, 1, "ConnectionError")]
     with connect() as admin:
         wait = value(admin, "SELECT extract(epoch FROM next_try_at - now()) FROM dolab.pending_file_deletions")
     assert 590 <= float(wait) <= 610
@@ -345,3 +351,103 @@ def test_a_deletion_completed_by_reconciliation_has_its_files_queued(db_client, 
     make_due()
     assert run_job().deleted == len(keys)
     assert not any(k in storage.list_keys(f"{user_id}/") for k in keys) and queued() == []
+
+
+# ------------------------------------------------------------------ invalid keys (review of #60)
+
+def test_invalid_keys_are_kept_and_do_not_stop_good_files(db_client, signup, tmp_path):
+    media = tmp_path / "media"
+    good = [photo_key(), photo_key("thumb.jpg")]
+    for key in good:
+        (media / key).parent.mkdir(parents=True, exist_ok=True)
+        (media / key).write_bytes(b"jpeg")
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"keep")
+    bad = ["../outside.txt", "2026/01/02/entry.json", "u/x.jpg", f"{uuid.uuid4()}/../../outside.txt"]
+    for key in good + bad:
+        admin_enqueue(key)
+    report = run_job(J.LocalFileDeleter(str(media)), batch=3)
+    assert (report.deleted, report.invalid, report.failed) == (2, 4, 0) and not report.stopped_early
+    assert J.exit_code(report) == J.EXIT_PROBLEMS
+    assert not any((media / k).exists() for k in good) and outside.read_bytes() == b"keep"
+    assert sorted(queue_rows()) == sorted((k, 1, "invalid_key") for k in bad)  # kept, not dropped
+    with connect() as admin:
+        waits = [float(w) for (w,) in rows(admin, "SELECT extract(epoch FROM next_try_at - now()) "
+                                                  "FROM dolab.pending_file_deletions")]
+    assert all(J.MAX_WAIT - 10 <= w <= J.MAX_WAIT + 10 for w in waits)
+
+
+# ------------------------------------------------------------------ the downgrade (review of #60)
+
+def test_the_downgrade_refuses_while_files_are_queued(scratch_db, monkeypatch):
+    from alembic import command
+
+    from tests.test_pg_roles import _alembic
+
+    config = _alembic(scratch_db, monkeypatch)
+    command.upgrade(config, "head")
+    key = photo_key()
+    with connect(database=scratch_db) as admin:
+        admin.execute("INSERT INTO dolab.pending_file_deletions (key, attempts, next_try_at, created_at) "
+                      "VALUES (%s, 0, now(), now())", (key,))
+    with pytest.raises(Exception, match="refusing to downgrade 0007: 1 photo files are still queued"):
+        command.downgrade(config, "0006_reconcile_purge")
+    with connect(database=scratch_db) as admin:
+        assert value(admin, "SELECT version_num FROM dolab.alembic_version") == "0007_file_deletion_queue"
+        assert rows(admin, "SELECT key FROM dolab.pending_file_deletions") == [(key,)]
+        assert "pending_file_deletions" in value(
+            admin, "SELECT prosrc FROM pg_proc WHERE oid = 'dolab.apply_deletion(text,uuid,uuid)'::regprocedure")
+        admin.execute("DELETE FROM dolab.pending_file_deletions")  # the files were dealt with
+    command.downgrade(config, "0006_reconcile_purge")
+    with connect(database=scratch_db) as admin:
+        assert value(admin, "SELECT version_num FROM dolab.alembic_version") == "0006_reconcile_purge"
+        assert value(admin, "SELECT to_regclass('dolab.pending_file_deletions')") is None
+    command.upgrade(config, "head")
+
+
+# ------------------------------------------------------------------ the database cannot be reached (review of #60)
+
+def _job_env(monkeypatch, url, tmp_path):
+    for name, value_ in {"DOLAB_ENV": "test", "DOLAB_FILE_CLEANER_DATABASE_URL": url,
+                         "DOLAB_STORAGE": "local", "DOLAB_MEDIA_DIR": str(tmp_path)}.items():
+        monkeypatch.setenv(name, value_)
+    for name in ("DOLAB_JWT_SECRET", "DOLAB_LEDGER_SIGNING_KEY", "DOLAB_S3_BUCKET", "DOLAB_LEDGER_BUCKET"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _with(url: str, **parts) -> str:
+    from sqlalchemy.engine import make_url
+
+    return make_url(url).set(**parts).render_as_string(hide_password=False)
+
+
+@pytest.mark.parametrize("case", ["wrong password", "no such database", "no server", "no such role"])
+def test_a_connection_failure_exits_5_and_changes_nothing(db_client, monkeypatch, tmp_path, caplog, case):
+    key = photo_key()
+    admin_enqueue(key)
+    before = queue_rows()
+    good = _conninfo(E.FILE_CLEANER)
+    url = {"wrong password": _with(good, password="not-the-password-x9"),
+           "no such database": _with(good, database="dolab_does_not_exist"),
+           "no server": _with(good, host="127.0.0.1", port=1),
+           "no such role": _with(good, username="dolab_nobody")}[case]
+    _job_env(monkeypatch, url, tmp_path)
+    assert J.main([]) == J.EXIT_NO_DATABASE
+    assert "could not connect to the database (OperationalError)" in caplog.text
+    assert "Traceback" not in caplog.text and "not-the-password-x9" not in caplog.text
+    assert queue_rows() == before
+
+
+def test_the_connection_limit_is_a_connection_failure(db_client, monkeypatch, tmp_path, caplog):
+    admin_enqueue(photo_key())
+    before = queue_rows()
+    _job_env(monkeypatch, _conninfo(E.FILE_CLEANER), tmp_path)
+    holders = [cleaner_queue(), cleaner_queue()]  # CONNECTION LIMIT 2
+    try:
+        assert J.main([]) == J.EXIT_NO_DATABASE
+    finally:
+        for holder in holders:
+            holder.close()
+    assert "could not connect to the database (OperationalError)" in caplog.text
+    assert queue_rows() == before
+    assert J.main([]) == J.EXIT_OK and queue_rows() == []  # with a free connection it works

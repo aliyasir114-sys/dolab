@@ -5,7 +5,7 @@
       "Sid": "DeletePhotoFilesOnly",
       "Effect": "Allow",
       "Action": ["s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::dolab-ci/*"]
+      "Resource": ["arn:aws:s3:::${PHOTO_BUCKET}/*"]
     }
   ]
 }
