@@ -54,9 +54,10 @@ BEGIN
     END IF;
     CASE p_entity_type
     WHEN 'item' THEN
-        -- Lock order users, then items, then photos, in every path (review of #60, 4aeb4a4):
-        -- the user's row FOR KEY SHARE first, so an account deletion (which locks it FOR UPDATE
-        -- and then the user's photos and items) and this deletion wait in one direction only.
+        -- Every path takes the user's row before any other lock (review of #60, 4aeb4a4): here
+        -- FOR KEY SHARE, then the item. An account deletion locks the user's row FOR UPDATE first
+        -- and then deletes the photos, then the items; with the user's row first in both, the
+        -- two wait in one direction only.
         -- If the account is deleted first, the item is gone too and this raises no_data_found.
         PERFORM 1 FROM dolab.users u WHERE u.id = v_user FOR KEY SHARE;
         -- Then the item: a photo insert needs FOR KEY SHARE on it, which FOR UPDATE blocks.

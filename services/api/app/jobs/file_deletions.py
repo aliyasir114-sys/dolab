@@ -28,7 +28,7 @@ and makes the run exit 1 so someone looks at it. It is never dropped.
 
 Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR UPDATE SKIP
 LOCKED, so two runs never take the same row), moves their next_try_at LEASE ahead, writes a fresh
-lease_token on them, and commits. The token fences a worker whose lease ran out (review of #60,
+lease_token on them, and commits. The token fences a worker whose row was taken over (review of #60,
 Medium 4): before each file the worker renews its lease on that row and checks the token is still
 its own, and it deletes or reschedules a row only where the token still matches. A worker that
 lost a row to another one leaves the file and the row alone, and counts it as lease_lost.
