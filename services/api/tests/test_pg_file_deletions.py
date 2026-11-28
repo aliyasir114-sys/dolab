@@ -673,3 +673,236 @@ def test_m4_a_worker_whose_lease_ran_out_changes_nothing(db_client, tmp_path):
     finally:
         second.close()
     assert queue_rows() == [] and not any((media / k).exists() for k in keys)
+
+
+# ------------------------------------------------------------------ the downgrade against a concurrent insert (review of #60, High 1)
+# The downgrade locks the queue ACCESS EXCLUSIVE before it counts the rows, in its own
+# transaction, and keeps the lock until the DROP commits. Both orders are forced, so these
+# tests are deterministic (each step waits until PostgreSQL shows the other one waiting).
+
+def waiting_in(database: str, statement_start: str, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with connect() as admin:
+            if value(admin, "SELECT count(*) FROM pg_stat_activity WHERE datname = %s AND wait_event_type = 'Lock' "
+                            "AND query ILIKE %s", database, statement_start + "%"):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+QUEUE_INSERT = ("INSERT INTO dolab.pending_file_deletions (key, attempts, next_try_at, created_at) "
+                "VALUES (%s, 0, now(), now())")
+
+
+def test_high1_a_row_being_inserted_is_waited_for_and_refuses_the_downgrade(scratch_db, monkeypatch):
+    from alembic import command
+
+    from tests.test_pg_roles import _alembic
+
+    config = _alembic(scratch_db, monkeypatch)
+    command.upgrade(config, "head")
+    key = photo_key()
+    with connect(database=scratch_db, autocommit=False) as inserting:
+        inserting.execute(QUEUE_INSERT, (key,))  # not committed yet
+        thread, outcome = in_thread(lambda: command.downgrade(config, "0006_reconcile_purge"))
+        assert waiting_in(scratch_db, "LOCK TABLE dolab.pending_file_deletions")  # waits for the insert
+        inserting.commit()
+    thread.join(30)
+    assert "refusing to downgrade 0007: 1 photo files are still queued" in str(outcome.get("error"))
+    with connect(database=scratch_db) as admin:
+        assert value(admin, "SELECT version_num FROM dolab.alembic_version") == "0007_file_deletion_queue"
+        assert rows(admin, "SELECT key FROM dolab.pending_file_deletions") == [(key,)]
+
+
+def test_high1_an_insert_during_the_downgrade_waits_and_never_commits(scratch_db, monkeypatch):
+    from alembic import command
+
+    from tests.test_pg_roles import _alembic
+
+    config = _alembic(scratch_db, monkeypatch)
+    command.upgrade(config, "head")
+    with connect(database=scratch_db, autocommit=False) as reader:
+        # A reader holds the table for a moment, so the downgrade is queued on its lock first.
+        reader.execute("SELECT 1 FROM dolab.pending_file_deletions LIMIT 1")
+        downgrading, down = in_thread(lambda: command.downgrade(config, "0006_reconcile_purge"))
+        assert waiting_in(scratch_db, "LOCK TABLE dolab.pending_file_deletions")
+
+        def insert_late():
+            with connect(database=scratch_db, autocommit=False) as late:
+                late.execute(QUEUE_INSERT, (photo_key(),))
+                late.commit()
+
+        inserting, ins = in_thread(insert_late)
+        assert waiting_in(scratch_db, "INSERT INTO dolab.pending_file_deletions")  # queued behind it
+        reader.rollback()  # the downgrade takes the lock, finds the queue empty, drops it
+    downgrading.join(30)
+    inserting.join(30)
+    assert "error" not in down, down.get("error")
+    assert isinstance(ins.get("error"), psycopg.Error)  # the late insert failed: it never committed
+    with connect(database=scratch_db) as admin:
+        assert value(admin, "SELECT version_num FROM dolab.alembic_version") == "0006_reconcile_purge"
+        assert value(admin, "SELECT to_regclass('dolab.pending_file_deletions')") is None
+    command.upgrade(config, "head")
+
+
+# ------------------------------------------------------------------ the real routes against an account deletion (review of #60, High 2)
+# The item routes that lock an item (photo upload, status change, wear log) now take the user's
+# row FOR KEY SHARE first, then the item FOR UPDATE: the order apply_deletion takes them (users
+# before items). Each test pauses one request while it holds its locks, starts the other, waits
+# until PostgreSQL shows it waiting on a lock, then lets the first go on: deterministic.
+
+def api_waiting_on_a_lock(timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with connect() as admin:
+            if value(admin, "SELECT count(*) FROM pg_stat_activity WHERE usename = %s AND wait_event_type = 'Lock'",
+                     E.APP):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def user_leftovers(user_id: str) -> dict:
+    with connect() as admin:
+        return {t: value(admin, f"SELECT count(*) FROM dolab.{t} WHERE user_id = %s", user_id)
+                for t in ("item_photos", "items", "wear_logs", "item_status_changes")}
+
+
+@pytest.mark.parametrize("kind", ["account", "item"])
+def test_high2_an_upload_holding_its_locks_is_waited_for(db_client, signup, monkeypatch, kind):
+    from app.routers import photos as photos_route
+
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    holding, go_on = threading.Event(), threading.Event()
+    real_process = photos_route.process_image
+
+    def paused(data):
+        holding.set()  # the upload holds the user (KEY SHARE) and the item (FOR UPDATE) now
+        assert go_on.wait(20)
+        return real_process(data)
+
+    monkeypatch.setattr(photos_route, "process_image", paused)
+    uploading, up = in_thread(lambda: upload(db_client, headers, item_id))
+    assert holding.wait(20)
+    path = "/me" if kind == "account" else f"/items/{item_id}"
+    deleting, gone = in_thread(lambda: db_client.delete(path, headers=headers))
+    assert api_waiting_on_a_lock()  # the deletion waits for the upload, it does not deadlock
+    go_on.set()
+    uploading.join(30)
+    deleting.join(30)
+    assert up["value"].status_code == 201, up
+    assert gone["value"].status_code == 204, gone
+    # The new photo was deleted with the rest, its files too, and nothing is left queued.
+    assert user_leftovers(user_id)["item_photos"] == 0
+    assert storage.list_keys(f"{user_id}/") == [] and queued() == []
+
+
+@pytest.mark.parametrize("kind", ["account", "item"])
+def test_high2_a_deletion_holding_its_locks_makes_the_upload_wait_then_404(db_client, signup, monkeypatch, kind):
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    holding, go_on = threading.Event(), threading.Event()
+    real_apply = deletion.apply_deletion
+
+    def apply_then_pause(db, *args):
+        keys = real_apply(db, *args)
+        holding.set()  # the deletion holds the user or the item FOR UPDATE, not committed yet
+        assert go_on.wait(20)
+        return keys
+
+    monkeypatch.setattr(deletion, "apply_deletion", apply_then_pause)
+    path = "/me" if kind == "account" else f"/items/{item_id}"
+    deleting, gone = in_thread(lambda: db_client.delete(path, headers=headers))
+    assert holding.wait(20)
+    uploading, up = in_thread(lambda: upload(db_client, headers, item_id))
+    assert api_waiting_on_a_lock()  # the upload waits before it saves anything
+    go_on.set()
+    deleting.join(30)
+    uploading.join(30)
+    assert gone["value"].status_code == 204, gone
+    assert up["value"].status_code == 404, up  # its item (or account) is gone; no file was saved
+    assert user_leftovers(user_id)["item_photos"] == 0
+    assert storage.list_keys(f"{user_id}/") == [] and queued() == []
+
+
+def test_high2_a_wear_log_holding_its_locks_is_waited_for_by_an_account_deletion(db_client, signup, monkeypatch):
+    from app import clock
+
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    holding, go_on = threading.Event(), threading.Event()
+    real_today = clock.today_in
+
+    def paused(tz):
+        holding.set()  # the wear request holds the user (KEY SHARE) and the item (FOR UPDATE)
+        assert go_on.wait(20)
+        return real_today(tz)
+
+    monkeypatch.setattr(clock, "today_in", paused)
+    wearing, worn = in_thread(lambda: db_client.post(f"/items/{item_id}/wear", headers=headers))
+    assert holding.wait(20)
+    deleting, gone = in_thread(lambda: db_client.delete("/me", headers=headers))
+    assert api_waiting_on_a_lock()
+    go_on.set()
+    wearing.join(30)
+    deleting.join(30)
+    assert worn["value"].status_code == 200, worn
+    assert gone["value"].status_code == 204, gone
+    assert user_leftovers(user_id) == {"item_photos": 0, "items": 0, "wear_logs": 0, "item_status_changes": 0}
+
+
+# ------------------------------------------------------------------ a worker that resumes after losing its lease (review of #60, Medium 4)
+
+def test_m4_a_worker_resuming_after_a_takeover_does_no_harm(db_client, tmp_path):
+    """The token cannot stop a storage call that has already started. What makes the overlap
+    harmless: deleting a file twice is a no-op, and a queued key is never reused - it names a
+    photo whose row is already gone, and every upload makes a new photo id."""
+    media = tmp_path / "media"
+    key = photo_key()
+    (media / key).parent.mkdir(parents=True, exist_ok=True)
+    (media / key).write_bytes(b"jpeg")
+    admin_enqueue(key)
+    second = cleaner_queue()
+    paused, resume = threading.Event(), threading.Event()
+
+    class PausedBeforeStorage:
+        """Worker 1 passed its ownership check, then stops before its storage call goes out."""
+
+        def delete(self, key_):
+            paused.set()
+            assert resume.wait(20)
+            J.LocalFileDeleter(str(media)).delete(key_)  # the call that was already on its way
+
+    first_run, first = in_thread(lambda: run_job(PausedBeforeStorage()))
+    try:
+        assert paused.wait(20)
+        make_due()  # worker 1's lease ends while it is stopped
+        ((taken, _),) = second.claim(10)
+        assert taken == key and second.hold(key)
+        J.LocalFileDeleter(str(media)).delete(key)
+        assert second.done(key)  # worker 2 finished: file gone, row gone
+        assert queue_rows() == [] and not (media / key).exists()
+        resume.set()  # worker 1 resumes and deletes the (already deleted) file again
+        first_run.join(30)
+    finally:
+        second.close()
+    report = first["value"]
+    assert (report.deleted, report.lease_lost) == (0, 1)  # it could not touch the row
+    assert queue_rows() == [] and not (media / key).exists()
+
+
+def test_photo_keys_are_never_reused(db_client, signup):
+    """Every upload makes a new photo id, and the keys are built from it: no key names two files."""
+    headers = signup()
+    item_id = new_item(db_client, headers)
+    photo_ids = [upload(db_client, headers, item_id).json()["id"] for _ in range(3)]
+    keys = [k for photo_id in photo_ids for k in photo_keys(photo_id)]
+    assert len(set(photo_ids)) == 3 and len(set(keys)) == 6
+    assert all(k.split("/")[1].split("_")[0] in photo_ids for k in keys)

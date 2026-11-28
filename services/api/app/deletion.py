@@ -166,7 +166,34 @@ def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: s
             log.exception("deletion intent left behind after a failed ledger write: %s", entry.entry_id)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "deleting is unavailable for a moment, try again shortly",
                             headers={"Retry-After": "30"}) from error
-    keys = apply_deletion(db, entity_type, entity_id, user_id)
-    db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry.entry_id))
-    db.commit()
-    return keys
+    for attempt in range(DELETION_TRIES):
+        try:
+            keys = apply_deletion(db, entity_type, entity_id, user_id)
+            db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry.entry_id))
+            db.commit()
+            return keys
+        except Exception as error:
+            db.rollback()
+            code = _sqlstate(error)
+            if code in _RETRYABLE and attempt + 1 < DELETION_TRIES:
+                # PostgreSQL ended this transaction to break a deadlock (or a serialization
+                # conflict): nothing of it was kept, the intent and the ledger entry stand, so
+                # running the deletion again is safe. Not hidden: logged, and raised if it recurs.
+                log.warning("deletion retried after PostgreSQL error %s (try %d of %d)", code, attempt + 1,
+                            DELETION_TRIES)
+                continue
+            raise
+    raise AssertionError("unreachable")
+
+
+# A deletion that PostgreSQL rolls back to break a lock cycle is tried once more (review of #60,
+# High 2). With the lock order users before items (apply_deletion, reconcile_apply and the item
+# routes' _own_item), no cycle is known between deletions and the API's own writes; this covers
+# one that is not. Any other error, or a second one, is raised as it is.
+DELETION_TRIES = 2
+_RETRYABLE = {"40P01", "40001"}  # deadlock_detected, serialization_failure
+
+
+def _sqlstate(error: BaseException) -> str | None:
+    original = getattr(error, "orig", error)
+    return getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)

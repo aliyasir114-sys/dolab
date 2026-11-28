@@ -161,6 +161,11 @@ class QueueNotEmpty(RuntimeError):
 def downgrade() -> None:
     # Never drop queued files silently (review of #60): each row is a photo file whose record is
     # gone but which may still be in storage. Refuse, and leave the database exactly as it is.
+    # The table is locked ACCESS EXCLUSIVE first, in this migration's own transaction, and stays
+    # locked until the DROP below commits: a row being inserted now is waited for and then
+    # counted (and the downgrade refused); an insert that comes later waits, and fails once the
+    # table is gone, so it never commits a row that the drop would lose (review of #60, High 1).
+    op.execute("LOCK TABLE dolab.pending_file_deletions IN ACCESS EXCLUSIVE MODE")
     pending = op.get_bind().execute(sa.text("SELECT count(*) FROM dolab.pending_file_deletions")).scalar()
     if pending:
         raise QueueNotEmpty(
