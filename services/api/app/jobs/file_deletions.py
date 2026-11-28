@@ -22,7 +22,8 @@ down: the run stops. Then it counts rows queued for more than 24 hours and alert
 
 Invalid keys (review of #60): a row whose key is not a photo key the server makes
 ("<user id>/<photo id>_original.<ext>" or "_thumb.jpg") is never sent to storage, so nothing
-outside DOLAB's photo files can be deleted. It is not a storage failure and does not stop the
+outside DOLAB's photo files can be deleted. A key the deleter itself refuses (ValueError: locally,
+a photo key that resolves outside the media folder through a symlink) is treated the same way. It is not a storage failure and does not stop the
 batch: it stays queued with last_error "invalid_key", is put back the longest wait (6 hours),
 and makes the run exit 1 so someone looks at it. It is never dropped.
 
@@ -30,8 +31,13 @@ Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR 
 LOCKED, so two runs never take the same row), moves their next_try_at LEASE ahead, writes a fresh
 lease_token on them, and commits. The token fences a worker whose row was taken over (review of #60,
 Medium 4): before each file the worker renews its lease on that row and checks the token is still
-its own, and it deletes or reschedules a row only where the token still matches. A worker that
-lost a row to another one leaves the file and the row alone, and counts it as lease_lost.
+its own, and it deletes or reschedules a row only where the token still matches. What the token
+guarantees: once another worker has leased the row under a new token, the first one changes
+nothing on that row and starts no new storage call for it (lease_lost). What it cannot: a storage
+call the first worker had already started - it passed its last check before the takeover, then
+stopped longer than its lease - can still reach storage after the takeover. That is a second
+delete of the same key, harmless: deleting a missing object is a no-op, and a queued key is never
+reused (it names a photo whose row is gone; every upload makes a new photo id).
 No transaction stays open and no row lock is held while files are deleted, so the server's own
 removal of queue rows never waits on the job. A run that stops part-way leaves its leased rows
 to come due again when the lease ends; deleting a file twice is harmless. Rows are first due
@@ -302,9 +308,19 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
             tried += 1
             try:
                 deleter.delete(key)
+            except ValueError:
+                # The deleter refused the key itself, before any storage request: a well-formed
+                # photo key that resolves outside the media folder (a symlink, locally). Not a
+                # storage failure, so it never counts towards "storage is down"; kept and reported
+                # like any invalid key (review of #60, 69dcccb).
+                tried -= 1
+                if queue.failed(key, attempts, "invalid_key", wait=MAX_WAIT):
+                    report.invalid += 1
+                else:
+                    report.lease_lost += 1
+                continue
             except Exception as error:  # noqa: BLE001 - one file must not stop the others
-                if queue.failed(key, attempts,
-                                "invalid_key" if isinstance(error, ValueError) else type(error).__name__):
+                if queue.failed(key, attempts, type(error).__name__):
                     failed_here += 1
                 else:
                     report.lease_lost += 1

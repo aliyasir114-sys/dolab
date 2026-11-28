@@ -298,3 +298,40 @@ def test_a_row_taken_over_by_another_worker_is_left_alone():
     assert ks[1] not in deleter.asked  # never sent to storage by the worker that lost it
     assert report.deleted == 2 and report.lease_lost == 1 and ks[1] in queue.rows
     assert J.exit_code(report) == J.EXIT_PROBLEMS
+
+
+class RefusingDeleter(RecordingDeleter):
+    """Refuses some well-formed photo keys itself, as LocalFileDeleter does for a key that
+    resolves outside the media folder through a symlink."""
+
+    def __init__(self, refuse=()):
+        super().__init__()
+        self.refuse = set(refuse)
+
+    def delete(self, key):
+        if key in self.refuse:
+            self.asked.append(key)
+            raise ValueError("invalid storage key")
+        super().delete(key)
+
+
+def test_a_batch_the_deleter_refuses_is_not_storage_down_and_the_next_batch_runs():
+    ks = keys(6)
+    refused, good = ks[:3], ks[3:]
+    queue, deleter = FakeQueue({k: 0 for k in ks}), RefusingDeleter(refuse=refused)
+    report = J.run(queue, deleter, batch=3)  # the first batch is all refused keys
+    assert not report.stopped_early and report.failed == 0
+    assert report.invalid == 3 and report.deleted == 3
+    assert set(queue.rows) == set(refused)  # kept, not dropped
+    for key in refused:
+        assert ("failed", key, 0, "invalid_key", J.MAX_WAIT) in queue.calls
+    assert J.exit_code(report) == J.EXIT_PROBLEMS
+
+
+def test_storage_down_still_stops_the_run_next_to_refused_keys():
+    ks = keys(4)
+    queue = FakeQueue({k: 0 for k in ks})
+    deleter = RefusingDeleter(refuse={ks[0]})
+    deleter.fail = set(ks[1:])  # every file actually sent to storage fails
+    report = J.run(queue, deleter, batch=10)
+    assert report.invalid == 1 and report.failed == 3 and report.stopped_early

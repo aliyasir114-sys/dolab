@@ -1048,3 +1048,29 @@ def test_a_real_deadlock_is_retried_in_a_new_transaction(db_client, signup, monk
     assert tries[1]["txid"] != tries[0]["txid"]  # a new transaction, not the broken one
     assert photo_rows("item_id", item_id) == [] and user_leftovers(user_id)["items"] == 0
     assert keys and storage.list_keys(f"{user_id}/") == [] and queued() == [] and intents() == []
+
+
+# ------------------------------------------------------------------ a key the deleter refuses (review of 69dcccb)
+
+def test_a_photo_key_through_a_symlink_is_kept_and_does_not_stop_the_run(db_client, tmp_path):
+    media, outside = tmp_path / "media", tmp_path / "outside"
+    outside.mkdir()
+    keys = sorted(photo_key() for _ in range(4))
+    refused, good = keys[:2], keys[2:]
+    for n, key in enumerate(refused):
+        target = outside / f"secret-{n}.jpg"
+        target.write_bytes(b"not DOLAB's")
+        (media / key).parent.mkdir(parents=True, exist_ok=True)
+        (media / key).symlink_to(target)  # well-formed key, resolves outside the media folder
+    for key in good:
+        (media / key).parent.mkdir(parents=True, exist_ok=True)
+        (media / key).write_bytes(b"jpeg")
+    for key in keys:  # in this order: the first batch is the two refused keys
+        admin_enqueue(key)
+    report = run_job(J.LocalFileDeleter(str(media)), batch=2)
+    assert not report.stopped_early and report.failed == 0
+    assert (report.invalid, report.deleted) == (2, 2)
+    assert J.exit_code(report) == J.EXIT_PROBLEMS
+    assert all((outside / f"secret-{n}.jpg").read_bytes() == b"not DOLAB's" for n in range(2))
+    assert not any((media / k).exists() for k in good)
+    assert sorted(queue_rows()) == sorted((k, 1, "invalid_key") for k in refused)
