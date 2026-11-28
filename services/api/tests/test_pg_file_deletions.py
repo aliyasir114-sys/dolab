@@ -528,7 +528,7 @@ def in_thread(work):
     return thread, outcome
 
 
-def deletion(kind: str, entity: str, user_id: str, name: str):
+def apply_deletion_as_api(kind: str, entity: str, user_id: str, name: str):
     def work():
         with app_connection(name) as conn:
             keys = [k for (k,) in conn.execute("SELECT dolab.apply_deletion(%s, %s::uuid, %s::uuid)",
@@ -554,7 +554,7 @@ def test_h2_an_upload_in_progress_is_waited_for_and_its_photo_queued(db_client, 
     entity = item_id if kind == "item" else user_id
     with app_connection("dz-upload") as up:
         new_keys = insert_photo(up, item_id, user_id)  # not committed yet: holds FOR KEY SHARE
-        thread, outcome = in_thread(deletion(kind, entity, user_id, "dz-delete"))
+        thread, outcome = in_thread(apply_deletion_as_api(kind, entity, user_id, "dz-delete"))
         assert waiting_on_a_lock("dz-delete")  # the deletion waits for the upload
         up.commit()  # the upload's record lands now
     thread.join(20)
@@ -617,7 +617,7 @@ def test_h2_many_uploads_racing_an_item_deletion_lose_no_key(db_client, signup):
     def delete_after_barrier():
         start.wait()
         time.sleep(0.03)
-        return deletion("item", item_id, user_id, "dz-delete")()
+        return apply_deletion_as_api("item", item_id, user_id, "dz-delete")()
 
     deleting = in_thread(delete_after_barrier)
     for thread, _ in [*threads, deleting]:
