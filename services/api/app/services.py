@@ -91,6 +91,8 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
                 break
             except StorageUnavailable:
                 spent += _monotonic() - started
+            except Exception:  # noqa: BLE001 - an unexpected storage error is a failed try, never raised
+                spent += _monotonic() - started
             if attempt == FILE_DELETE_TRIES - 1 or spent + _WAITS[attempt] > FILE_FAILURE_BUDGET:
                 break
             _sleep(_WAITS[attempt])
@@ -121,22 +123,46 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
     return left
 
 
-def delete_photo_files(photos: list[ItemPhoto]) -> None:
-    """Remove the stored files of the given photos. Call after the database change is committed.
+def delete_files_after_commit(db: Session, keys: list[str]) -> int:
+    """The routes' entry point for the immediate attempt, once the deletion is committed.
 
-    Used when an upload fails after its files were saved: the photo record was never committed,
-    so a storage failure here leaves the file for the orphan clean-up job. Logs counts only,
-    never keys (a key carries the user id).
+    Never raises: the deletion is saved, so the request must report it as done whatever happens
+    to the files. Any unexpected error here leaves the files and their queue rows for the queue
+    job (apply_deletion queued every key before the commit), and is logged by class only.
+    Returns how many files are left for the queue job.
     """
-    left = 0
+    try:
+        return delete_file_keys(db, keys)
+    except Exception as error:  # noqa: BLE001 - see above
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        log.warning("immediate deletion of %d photo files stopped (%s); all left for the file deletion queue",
+                    len(keys), type(error).__name__)
+        return len(keys)
+
+
+def delete_photo_files(photos: list[ItemPhoto]) -> None:
+    """Remove the stored files of an upload that failed after its files were saved.
+
+    The photo record was never committed, so a file left here is an orphan for the orphan
+    clean-up job. Never raises, so the upload's own error is the one the caller re-raises: a
+    storage failure, an invalid key or any unexpected error on one file only counts that file
+    as left, and the other files are still tried. Logs counts and classes only, never keys (a
+    key carries the user id).
+    """
+    left, errors = 0, set()
     for photo in photos:
         for key in (photo.original_key, photo.thumb_key):
             try:
                 storage.delete(key)
-            except StorageUnavailable:
+            except Exception as error:  # noqa: BLE001 - StorageUnavailable, ValueError (invalid key), anything
                 left += 1
+                errors.add(type(error).__name__)
     if left:
-        log.warning("%d photo files of a failed upload left in storage for the orphan job", left)
+        log.warning("%d photo files of a failed upload left in storage for the orphan job (%s)",
+                    left, ", ".join(sorted(errors)))
 
 
 def items_out(db: Session, items: list[Item]) -> list[ItemOut]:

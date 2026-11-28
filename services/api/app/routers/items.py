@@ -9,7 +9,7 @@ from ..deps import CurrentUser, Db
 from ..models import DonationItem, Item, ItemPhoto, ItemStatusChange, WearLog, new_id
 from ..schemas import ItemIn, ItemOut, ItemPatch, ItemStatus, WearIn
 from ..deletion import delete_with_ledger
-from ..services import delete_file_keys, item_out, items_out, set_status
+from ..services import delete_files_after_commit, item_out, items_out, set_status
 from ..transitions import path_for, refusal
 
 router = APIRouter(prefix="/items", tags=["wardrobe"])
@@ -91,7 +91,7 @@ def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> Ite
 def delete_item(item_id: str, user: CurrentUser, db: Db) -> Response:
     item = _own_item(db, user.id, item_id)
     # The ledger entry first; the deletion only once it is confirmed (plan 4.10.1).
-    delete_file_keys(db, delete_with_ledger(db, "item", item.id, user.id))
+    delete_files_after_commit(db, delete_with_ledger(db, "item", item.id, user.id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

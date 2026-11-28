@@ -247,3 +247,125 @@ def test_m2_slow_failing_calls_count_against_the_budget(client, signup, monkeypa
     assert len(calls) == 2 and len(set(calls)) == 1 and waits == [0.2]
     assert clock.now - 1000.0 + sum(waits) <= services.FILE_FAILURE_BUDGET + 1.5  # budget + one call
     assert queued() == keys
+
+
+# ------------------------------------------------------------------ invalid keys and failures after the commit
+# (PR #60 review, Ali 2026-11-28). The deletion is committed before any file is touched, so the
+# request reports it as done whatever happens to the files; every file not deleted keeps its row.
+
+def item_keys(client, headers, item_id) -> list[str]:
+    return sorted(k for p in client.get(f"/items/{item_id}/photos", headers=headers).json() for k in photo_keys(p["id"]))
+
+
+def storage_that(monkeypatch, bad: dict[str, Exception]) -> list[str]:
+    """storage.delete raises the given error for the given keys and works for the others."""
+    real, calls = storage.delete, []
+
+    def delete(key):
+        calls.append(key)
+        if key in bad:
+            raise bad[key]
+        real(key)
+
+    monkeypatch.setattr(storage, "delete", delete)
+    return calls
+
+
+def test_an_item_with_a_mixed_batch_of_invalid_and_valid_keys(client, signup, monkeypatch, waits):
+    headers = signup()
+    item_id = new_item(client, headers)
+    for _ in range(3):
+        upload(client, headers, item_id)
+    keys = item_keys(client, headers, item_id)
+    invalid = [keys[1], keys[4]]
+    calls = storage_that(monkeypatch, {k: ValueError("invalid storage key") for k in invalid})
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+    assert client.get(f"/items/{item_id}", headers=headers).status_code == 404
+    assert sorted(calls) == keys and waits == []  # every file tried once; invalid ones not retried
+    assert queued() == sorted(invalid)  # kept for the queue job, which marks them invalid_key
+    assert stored_files(client, headers) == sorted(invalid)
+
+
+def test_an_account_with_invalid_keys_is_deleted_and_its_other_files_too(client, signup, monkeypatch, waits):
+    headers = signup()
+    user_id = client.get("/me", headers=headers).json()["id"]
+    keys = []
+    for _ in range(2):
+        item_id = new_item(client, headers)
+        upload(client, headers, item_id)
+        upload(client, headers, item_id)
+        keys += item_keys(client, headers, item_id)
+    keys.sort()
+    invalid = [keys[0], keys[5]]
+    storage_that(monkeypatch, {k: ValueError("invalid storage key") for k in invalid})
+    assert client.delete("/me", headers=headers).status_code == 204
+    assert client.get("/me", headers=headers).status_code == 401
+    assert queued() == sorted(invalid)
+    assert storage.list_keys(f"{user_id}/") == sorted(invalid)
+
+
+def test_an_unexpected_storage_error_after_the_commit_is_not_a_failed_deletion(client, signup, monkeypatch, waits):
+    headers = signup()
+    item_id = new_item(client, headers)
+    upload(client, headers, item_id)
+    upload(client, headers, item_id)
+    keys = item_keys(client, headers, item_id)
+    storage_that(monkeypatch, {k: RuntimeError("driver bug") for k in keys})
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+    assert client.get(f"/items/{item_id}", headers=headers).status_code == 404
+    assert queued() == keys and stored_files(client, headers) == keys  # nothing lost
+
+
+def test_a_cleanup_that_breaks_entirely_still_reports_the_deletion(client, signup, monkeypatch, caplog):
+    headers = signup()
+    item_id = new_item(client, headers)
+    photo = upload(client, headers, item_id).json()
+    keys = photo_keys(photo["id"])
+
+    def broken(db, keys_):
+        raise RuntimeError("cleanup bug")
+
+    monkeypatch.setattr(services, "delete_file_keys", broken)
+    assert client.delete(f"/items/{item_id}/photos/{photo['id']}", headers=headers).status_code == 204
+    assert client.get(f"/items/{item_id}/photos", headers=headers).json() == []
+    assert queued() == keys and stored_files(client, headers) == keys
+    assert "immediate deletion of 2 photo files stopped (RuntimeError)" in caplog.text
+    assert not any(k in caplog.text for k in keys)
+    # The account deletion goes through the same guard.
+    assert client.delete("/me", headers=headers).status_code == 204
+    assert client.get("/me", headers=headers).status_code == 401
+
+
+def test_a_failed_upload_cleans_up_past_an_invalid_key_and_keeps_its_own_error(client, signup, monkeypatch, caplog):
+    from sqlalchemy.orm import Session
+
+    from app.models import ItemPhoto
+
+    headers = signup()
+    item_id = new_item(client, headers)
+    real_commit, calls = Session.commit, []
+
+    def failing_commit(self):
+        # Only the commit that would save the new photo record fails (sign-in, rate limits and
+        # the rest of the request commit as usual).
+        if any(isinstance(obj, ItemPhoto) for obj in self.new):
+            raise RuntimeError("database gone during upload")
+        real_commit(self)
+
+    real_delete = storage.delete
+
+    def first_key_invalid(key):
+        calls.append(key)
+        if len(calls) == 1:
+            raise ValueError("invalid storage key")
+        real_delete(key)
+
+    monkeypatch.setattr(Session, "commit", failing_commit)
+    monkeypatch.setattr(storage, "delete", first_key_invalid)
+    with pytest.raises(RuntimeError, match="database gone during upload"):  # the upload's own error
+        upload(client, headers, item_id)
+    monkeypatch.setattr(Session, "commit", real_commit)
+    assert len(calls) == 2  # the second file was still deleted after the first one's error
+    assert stored_files(client, headers) == [calls[0]]  # the one left is an orphan for the orphan job
+    assert "1 photo files of a failed upload left in storage for the orphan job (ValueError)" in caplog.text
+    assert calls[0] not in caplog.text

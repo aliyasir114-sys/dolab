@@ -20,10 +20,11 @@ Set up as decided in plan 4.10.1د (decision 20). Every table is in the schema `
 | Role | Logs in | What it may do |
 |---|---|---|
 | `dolab_schema_owner` | no | Owns the schema, every table and the migration version table |
-| `dolab_deleter` | no | Will own the deletion functions (step C). `USAGE` on the schema only |
+| `dolab_deleter` | no | Owns the deletion functions (`dolab.apply_deletion`, `reconcile_apply`, `reconcile_purge_intents`, `reconcile_record_run`; migrations 0005–0007). Column-level `SELECT` on what they read, `DELETE` on the user data tables, `INSERT` on `pending_file_deletions`, `reconciled_entries` and `audit_log` |
 | `dolab_deploy` | yes | Runs migrations. No rights of its own; may only `SET ROLE` to the two roles above |
 | `dolab_app` | yes | The API. Table rights from the migrations, table by table (below) |
-| `dolab_reconciler` | yes, 2 connections | The reconciliation job (step C). `USAGE` on the schema only for now |
+| `dolab_reconciler` | yes, 2 connections | The reconciliation job (`python -m app.jobs.reconcile`, not scheduled). No right on any table; may only run `reconcile_apply`, `reconcile_purge_intents` and `reconcile_record_run`. `statement_timeout` 30 s |
+| `dolab_file_cleaner` | yes, 2 connections | The photo file deletion queue job (`python -m app.jobs.file_deletions`, not scheduled). On `pending_file_deletions` only: `SELECT` and `DELETE`, and `UPDATE` on `attempts`, `next_try_at` and `last_error` (never `key` or `created_at`). No other table, no function. `statement_timeout` 30 s, `idle_in_transaction_session_timeout` 60 s |
 
 1. **Once per database**, as the infrastructure's admin identity:
    `psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -f dbtools/bootstrap.sql`, then set a password on each login role.
@@ -88,12 +89,12 @@ All endpoints are under `/v1` (only `/health` is at the root).
 - Status changes follow one table (`app/transitions.py`, plan 4.9): `PATCH` moves between available, laundry, repair, stored and lost; `donated` is reached only through a donation and never left through `PATCH`; `for_sale` is reserved for the market.
 - "Today" is the user's day in their time zone (`PATCH /me` with an IANA name), for wear dates and the dashboard month.
 - Photos: JPEG, PNG or WebP up to 8 MB, at most 6 per item. The type is decided from the file's content, not its name. Each photo is re-encoded, which removes location and device data, and a thumbnail is made.
-- Photo files are private. They are served only through signed links that expire after 10 minutes; the API hands those links to the owner alone. Deleting a photo, an item or the account deletes the files.
+- Photo files are private. They are served only through signed links that expire after 10 minutes; the API hands those links to the owner alone. Deleting a photo, an item or the account deletes their records at once and queues their files in the same transaction. After the commit the server deletes the files and removes them from the queue. A file it cannot delete (storage down, an invalid key, any other error) stays queued for the file deletion queue job, and the request still reports the deletion as done (see "Photo file deletion queue" below).
 - Items carry `cover_thumb_url`, a signed link to their first photo's thumbnail.
 
 ## Not implemented yet
 
-Google and phone sign-in, a real email provider (reset codes are only logged in development), automatic clothing extraction from photos, object storage (photos are on local disk for now), outfit suggestions, market, heritage, admin. The deletion log, deletion functions and reconciliation job (plan 4.10, step C).
+Google and phone sign-in, a real email provider (reset codes are only logged in development), automatic clothing extraction from photos, outfit suggestions, market, heritage, admin. The background jobs (`app.jobs.orphans`, `app.jobs.file_deletions`, `app.jobs.reconcile`) exist but are not scheduled in any environment: until they are, nothing processes the file deletion queue on its own, and reconciliation stays disabled (see the conditions below). Photos are stored on local disk or in S3-compatible object storage (`DOLAB_STORAGE`); sync tombstones (step D) and the ledger's `profile` entries (v2) are not built yet.
 
 ## Security notes
 
