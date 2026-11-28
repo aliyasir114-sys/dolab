@@ -752,15 +752,36 @@ def test_high1_an_insert_during_the_downgrade_waits_and_never_commits(scratch_db
 # before items). Each test pauses one request while it holds its locks, starts the other, waits
 # until PostgreSQL shows it waiting on a lock, then lets the first go on: deterministic.
 
-def api_waiting_on_a_lock(timeout: float = 10.0) -> bool:
+def backend_pid(db) -> int:
+    """The PostgreSQL backend of a request's session (called from inside the request)."""
+    from sqlalchemy import text
+
+    return db.execute(text("SELECT pg_backend_pid()")).scalar()
+
+
+def blocked_by(holder_pid: int, timeout: float = 10.0) -> bool:
+    """True once some other backend is waiting on a lock that this backend holds: the waiting
+    request is tied to the request holding the lock, not to any API connection."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with connect() as admin:
-            if value(admin, "SELECT count(*) FROM pg_stat_activity WHERE usename = %s AND wait_event_type = 'Lock'",
-                     E.APP):
+            if value(admin, "SELECT count(*) FROM pg_stat_activity WHERE pid <> %s AND %s = ANY(pg_blocking_pids(pid))",
+                     holder_pid, holder_pid):
                 return True
         time.sleep(0.05)
     return False
+
+
+def own_item_recording_pid(monkeypatch, module, pids: list):
+    """Wrap a route module's _own_item so the request's backend is known once it holds its locks."""
+    real = module._own_item
+
+    def wrapped(db, *args, **kwargs):
+        item = real(db, *args, **kwargs)
+        pids.append(backend_pid(db))
+        return item
+
+    monkeypatch.setattr(module, "_own_item", wrapped)
 
 
 def user_leftovers(user_id: str) -> dict:
@@ -786,11 +807,13 @@ def test_high2_an_upload_holding_its_locks_is_waited_for(db_client, signup, monk
         return real_process(data)
 
     monkeypatch.setattr(photos_route, "process_image", paused)
+    pids: list[int] = []
+    own_item_recording_pid(monkeypatch, photos_route, pids)
     uploading, up = in_thread(lambda: upload(db_client, headers, item_id))
     assert holding.wait(20)
     path = "/me" if kind == "account" else f"/items/{item_id}"
     deleting, gone = in_thread(lambda: db_client.delete(path, headers=headers))
-    assert api_waiting_on_a_lock()  # the deletion waits for the upload, it does not deadlock
+    assert blocked_by(pids[-1])  # the deletion waits for this upload, it does not deadlock
     go_on.set()
     uploading.join(30)
     deleting.join(30)
@@ -810,8 +833,11 @@ def test_high2_a_deletion_holding_its_locks_makes_the_upload_wait_then_404(db_cl
     holding, go_on = threading.Event(), threading.Event()
     real_apply = deletion.apply_deletion
 
+    pids: list[int] = []
+
     def apply_then_pause(db, *args):
         keys = real_apply(db, *args)
+        pids.append(backend_pid(db))
         holding.set()  # the deletion holds the user or the item FOR UPDATE, not committed yet
         assert go_on.wait(20)
         return keys
@@ -821,7 +847,7 @@ def test_high2_a_deletion_holding_its_locks_makes_the_upload_wait_then_404(db_cl
     deleting, gone = in_thread(lambda: db_client.delete(path, headers=headers))
     assert holding.wait(20)
     uploading, up = in_thread(lambda: upload(db_client, headers, item_id))
-    assert api_waiting_on_a_lock()  # the upload waits before it saves anything
+    assert blocked_by(pids[-1])  # the upload waits for this deletion before it saves anything
     go_on.set()
     deleting.join(30)
     uploading.join(30)
@@ -846,10 +872,14 @@ def test_high2_a_wear_log_holding_its_locks_is_waited_for_by_an_account_deletion
         return real_today(tz)
 
     monkeypatch.setattr(clock, "today_in", paused)
+    from app.routers import items as items_route
+
+    pids: list[int] = []
+    own_item_recording_pid(monkeypatch, items_route, pids)
     wearing, worn = in_thread(lambda: db_client.post(f"/items/{item_id}/wear", headers=headers))
     assert holding.wait(20)
     deleting, gone = in_thread(lambda: db_client.delete("/me", headers=headers))
-    assert api_waiting_on_a_lock()
+    assert blocked_by(pids[-1])
     go_on.set()
     wearing.join(30)
     deleting.join(30)
@@ -906,3 +936,115 @@ def test_photo_keys_are_never_reused(db_client, signup):
     keys = [k for photo_id in photo_ids for k in photo_keys(photo_id)]
     assert len(set(photo_ids)) == 3 and len(set(keys)) == 6
     assert all(k.split("/")[1].split("_")[0] in photo_ids for k in keys)
+
+
+# ------------------------------------------------------------------ item deletion against account deletion (review of 4aeb4a4, High)
+# Every deletion takes the locks users, then items, then photos: an item (or photo) deletion takes
+# the user's row FOR KEY SHARE before its item, an account deletion takes it FOR UPDATE first. So
+# the two wait in one direction only. Both orders, through the real routes, deterministic.
+
+def pause_deletion_of(monkeypatch, kind: str):
+    """Pause the deletion of `kind` right after apply_deletion, holding its locks uncommitted."""
+    real = deletion.apply_deletion
+    holding, go_on, pids = threading.Event(), threading.Event(), []
+
+    def apply(db, entity_type, *args):
+        keys = real(db, entity_type, *args)
+        if entity_type == kind and not holding.is_set():
+            pids.append(backend_pid(db))
+            holding.set()
+            assert go_on.wait(20)
+        return keys
+
+    monkeypatch.setattr(deletion, "apply_deletion", apply)
+    return holding, go_on, pids
+
+
+def intents() -> list[tuple]:
+    with connect() as admin:
+        return rows(admin, "SELECT entity_type FROM dolab.deletion_intents")
+
+
+def test_item_deletion_first_then_account_deletion_both_complete(db_client, signup, monkeypatch):
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    new_item(db_client, headers)  # a second item, deleted with the account
+    holding, go_on, pids = pause_deletion_of(monkeypatch, "item")
+    deleting_item, item_gone = in_thread(lambda: db_client.delete(f"/items/{item_id}", headers=headers))
+    assert holding.wait(20)
+    deleting_account, account_gone = in_thread(lambda: db_client.delete("/me", headers=headers))
+    assert blocked_by(pids[0])  # the account deletion waits for this item deletion, no cycle
+    go_on.set()
+    deleting_item.join(30)
+    deleting_account.join(30)
+    assert item_gone["value"].status_code == 204, item_gone
+    assert account_gone["value"].status_code == 204, account_gone
+    assert user_leftovers(user_id) == {"item_photos": 0, "items": 0, "wear_logs": 0, "item_status_changes": 0}
+    assert storage.list_keys(f"{user_id}/") == [] and queued() == [] and intents() == []
+
+
+def test_account_deletion_first_then_item_deletion_answers_404(db_client, signup, monkeypatch):
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    holding, go_on, pids = pause_deletion_of(monkeypatch, "user")
+    deleting_account, account_gone = in_thread(lambda: db_client.delete("/me", headers=headers))
+    assert holding.wait(20)
+    deleting_item, item_gone = in_thread(lambda: db_client.delete(f"/items/{item_id}", headers=headers))
+    assert blocked_by(pids[0])  # the item deletion waits for this account deletion, no cycle
+    go_on.set()
+    deleting_account.join(30)
+    deleting_item.join(30)
+    assert account_gone["value"].status_code == 204, account_gone
+    assert item_gone["value"].status_code == 404, item_gone  # the account took the item with it
+    assert user_leftovers(user_id) == {"item_photos": 0, "items": 0, "wear_logs": 0, "item_status_changes": 0}
+    assert storage.list_keys(f"{user_id}/") == [] and queued() == []
+    assert intents() == []  # the item request's intent was removed: nothing to reconcile
+
+
+# ------------------------------------------------------------------ the deadlock retry on a real deadlock (review of 4aeb4a4, Medium)
+# A real cycle, forced: a test connection locks a photo row, the item deletion waits for it, then
+# the test connection asks for the item the deletion holds. The test connection's
+# deadlock_timeout is raised, so PostgreSQL's detector always runs in the deletion's backend
+# first and ends the deletion (40P01). The deletion is then tried once more, in a new
+# transaction, and completes once the test connection lets go. Deterministic.
+
+def test_a_real_deadlock_is_retried_in_a_new_transaction(db_client, signup, monkeypatch, caplog):
+    from sqlalchemy import text
+
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    keys = {k for row in photo_rows("item_id", item_id) for k in row}
+    real = deletion.apply_deletion
+    tries: list[dict] = []
+
+    def apply(db, *args):
+        tries.append({"in_transaction": db.in_transaction(), "pid": backend_pid(db),
+                      "txid": db.execute(text("SELECT txid_current()")).scalar()})
+        return real(db, *args)
+
+    monkeypatch.setattr(deletion, "apply_deletion", apply)
+    with connect(autocommit=False) as other:
+        other.execute("SET deadlock_timeout = '60s'")
+        other_pid = value(other, "SELECT pg_backend_pid()")
+        other.execute("SELECT 1 FROM dolab.item_photos WHERE item_id = %s FOR UPDATE", (item_id,))
+        deleting, gone = in_thread(lambda: db_client.delete(f"/items/{item_id}", headers=headers))
+        assert blocked_by(other_pid)  # the deletion holds the item and waits for the photo row
+        # Now ask for the item: a cycle. The deletion's backend detects it after its 1 s and is
+        # ended; this statement then gets the item.
+        other.execute("SELECT 1 FROM dolab.items WHERE id = %s FOR UPDATE", (item_id,))
+        assert blocked_by(other_pid)  # the second try waits for this connection in its turn
+        other.rollback()
+    deleting.join(30)
+    assert gone["value"].status_code == 204, gone
+    assert "deletion retried after PostgreSQL error 40P01 (try 1 of 2)" in caplog.text
+    assert len(tries) == 2
+    assert tries[1]["in_transaction"] is False  # rolled back before the second try
+    assert tries[1]["txid"] != tries[0]["txid"]  # a new transaction, not the broken one
+    assert photo_rows("item_id", item_id) == [] and user_leftovers(user_id)["items"] == 0
+    assert keys and storage.list_keys(f"{user_id}/") == [] and queued() == [] and intents() == []

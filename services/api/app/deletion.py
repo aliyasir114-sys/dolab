@@ -175,10 +175,17 @@ def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: s
         except Exception as error:
             db.rollback()
             code = _sqlstate(error)
+            if isinstance(error, NotFound) or code == _NO_DATA_FOUND:
+                # The entity went in the meantime: another deletion (an account deletion that
+                # this one waited for) removed it first. Nothing was deleted here; this request
+                # did not happen, so its intent goes and the answer is 404, not an error.
+                _remove_intent_quietly(entry.entry_id)
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"{entity_type} not found") from error
             if code in _RETRYABLE and attempt + 1 < DELETION_TRIES:
-                # PostgreSQL ended this transaction to break a deadlock (or a serialization
-                # conflict): nothing of it was kept, the intent and the ledger entry stand, so
-                # running the deletion again is safe. Not hidden: logged, and raised if it recurs.
+                # PostgreSQL ended this transaction to break a deadlock: nothing of it was kept
+                # (the session was rolled back above, so the next try starts a new transaction),
+                # the intent and the ledger entry stand, so running the deletion again is safe.
+                # Not hidden: logged, and raised if it recurs.
                 log.warning("deletion retried after PostgreSQL error %s (try %d of %d)", code, attempt + 1,
                             DELETION_TRIES)
                 continue
@@ -191,7 +198,17 @@ def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: s
 # routes' _own_item), no cycle is known between deletions and the API's own writes; this covers
 # one that is not. Any other error, or a second one, is raised as it is.
 DELETION_TRIES = 2
-_RETRYABLE = {"40P01", "40001"}  # deadlock_detected, serialization_failure
+# deadlock_detected only. serialization_failure (40001) cannot happen here: the deletion runs in
+# READ COMMITTED, where PostgreSQL does not raise it; it is not retried.
+_RETRYABLE = {"40P01"}
+_NO_DATA_FOUND = "P0002"  # raised by dolab.apply_deletion when the entity is not there
+
+
+def _remove_intent_quietly(entry_id: str) -> None:
+    try:
+        _remove_intent(entry_id)
+    except Exception:  # noqa: BLE001 - an old intent is removed by the reconciliation clean-up
+        log.warning("deletion intent left behind after a 404: %s", entry_id)
 
 
 def _sqlstate(error: BaseException) -> str | None:

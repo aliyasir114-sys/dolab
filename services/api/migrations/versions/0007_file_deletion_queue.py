@@ -54,7 +54,12 @@ BEGIN
     END IF;
     CASE p_entity_type
     WHEN 'item' THEN
-        -- Lock the item first: a photo insert needs FOR KEY SHARE on it, which FOR UPDATE blocks.
+        -- Lock order users, then items, then photos, in every path (review of #60, 4aeb4a4):
+        -- the user's row FOR KEY SHARE first, so an account deletion (which locks it FOR UPDATE
+        -- and then the user's photos and items) and this deletion wait in one direction only.
+        -- If the account is deleted first, the item is gone too and this raises no_data_found.
+        PERFORM 1 FROM dolab.users u WHERE u.id = v_user FOR KEY SHARE;
+        -- Then the item: a photo insert needs FOR KEY SHARE on it, which FOR UPDATE blocks.
         -- An upload already in progress is waited for (and its photo then deleted and queued);
         -- one that comes after waits, then fails on the foreign key.
         PERFORM 1 FROM dolab.items i WHERE i.id = v_entity AND i.user_id = v_user FOR UPDATE;
@@ -70,6 +75,7 @@ BEGIN
         DELETE FROM dolab.donation_items WHERE item_id = v_entity;
         DELETE FROM dolab.items WHERE id = v_entity;
     WHEN 'photo' THEN
+        PERFORM 1 FROM dolab.users u WHERE u.id = v_user FOR KEY SHARE;  -- users first, as above
         IF NOT EXISTS (SELECT 1 FROM dolab.item_photos p WHERE p.id = v_entity AND p.user_id = v_user) THEN
             RAISE EXCEPTION 'apply_deletion: no such photo for this user' USING ERRCODE = 'no_data_found';
         END IF;

@@ -57,3 +57,35 @@ def test_other_errors_are_not_retried(client, signup, monkeypatch):
     monkeypatch.undo()
     assert len(calls) == 1
     assert client.get(f"/items/{item_id}", headers=headers).status_code == 200
+
+
+class SerializationFailure(Exception):
+    sqlstate = "40001"  # cannot happen in READ COMMITTED; not retried
+
+
+def test_a_serialization_failure_is_not_retried(client, signup, monkeypatch):
+    headers = signup()
+    item_id = new_item(client, headers)
+    calls = failing_first(monkeypatch, [SerializationFailure("could not serialize")])
+    with pytest.raises(SerializationFailure):
+        client.delete(f"/items/{item_id}", headers=headers)
+    monkeypatch.undo()
+    assert len(calls) == 1
+    assert client.get(f"/items/{item_id}", headers=headers).status_code == 200
+
+
+class Gone(Exception):
+    sqlstate = "P0002"  # what apply_deletion raises when the entity is not there
+
+
+def test_an_entity_gone_meanwhile_is_a_404_and_its_intent_is_removed(client, signup, monkeypatch):
+    from app.db import SessionLocal
+    from app.models import DeletionIntent
+
+    headers = signup()
+    item_id = new_item(client, headers)
+    calls = failing_first(monkeypatch, [Gone("no such item for this user")])
+    assert client.delete(f"/items/{item_id}", headers=headers).status_code == 404
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert db.query(DeletionIntent).count() == 0
