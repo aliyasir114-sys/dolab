@@ -186,6 +186,27 @@ def test_l1_one_file_that_keeps_failing_does_not_stop_the_others(client, signup,
     assert stored_files(client, headers) == [stuck]
 
 
+def test_an_invalid_storage_key_does_not_stop_immediate_deletion(client, signup, monkeypatch):
+    headers = signup()
+    item_id = new_item(client, headers)
+    photo = upload(client, headers, item_id).json()
+    bad = photo_keys(photo["id"])[0]
+    real = storage.delete
+    calls = []
+
+    def invalid_key(key):
+        calls.append(key)
+        if key == bad:
+            raise ValueError("invalid storage key")
+        real(key)
+
+    monkeypatch.setattr(storage, "delete", invalid_key)
+    assert client.delete(f"/items/{item_id}/photos/{photo['id']}", headers=headers).status_code == 204
+    assert calls.count(bad) == 1
+    assert queued() == [bad]
+    assert stored_files(client, headers) == [bad]
+
+
 def test_two_files_failing_in_a_row_stop_the_attempt(client, signup, monkeypatch, waits):
     headers = signup()
     item_id = new_item(client, headers)

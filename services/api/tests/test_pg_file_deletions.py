@@ -275,6 +275,24 @@ def test_m1_the_server_never_waits_long_on_a_locked_queue_row(db_client, signup,
     assert run_job().deleted == 2 and queued() == []  # the job finds the files gone
 
 
+def test_an_invalid_storage_key_does_not_stop_immediate_deletion(db_client, signup, monkeypatch):
+    headers = signup()
+    item_id = new_item(db_client, headers)
+    photo = upload(db_client, headers, item_id).json()
+    bad = photo_keys(photo["id"])[0]
+    real = storage.delete
+
+    def invalid_key(key):
+        if key == bad:
+            raise ValueError("invalid storage key")
+        real(key)
+
+    monkeypatch.setattr(storage, "delete", invalid_key)
+    assert db_client.delete(f"/items/{item_id}/photos/{photo['id']}", headers=headers).status_code == 204
+    assert queued() == [bad]
+    assert stored_files(db_client, headers) == [bad]
+
+
 def test_a_failure_is_rescheduled_with_a_wait(db_client):
     stuck = photo_key()
     admin_enqueue(stuck)

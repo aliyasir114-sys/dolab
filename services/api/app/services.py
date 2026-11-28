@@ -79,11 +79,15 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
     failed_in_a_row = 0
     for key in keys:
         ok = False
+        invalid_key = False
         for attempt in range(FILE_DELETE_TRIES):
             started = _monotonic()
             try:
                 storage.delete(key)
                 ok = True
+                break
+            except ValueError:
+                invalid_key = True
                 break
             except StorageUnavailable:
                 spent += _monotonic() - started
@@ -91,6 +95,8 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
                 break
             _sleep(_WAITS[attempt])
             spent += _WAITS[attempt]
+        if invalid_key:
+            continue
         if ok:
             deleted.append(key)
             failed_in_a_row = 0
