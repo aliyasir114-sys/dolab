@@ -369,3 +369,65 @@ def test_a_failed_upload_cleans_up_past_an_invalid_key_and_keeps_its_own_error(c
     assert stored_files(client, headers) == [calls[0]]  # the one left is an orphan for the orphan job
     assert "1 photo files of a failed upload left in storage for the orphan job (ValueError)" in caplog.text
     assert calls[0] not in caplog.text
+
+
+# ------------------------------------------------------------------ only photo keys reach storage (review of #60)
+
+def set_photo_key(photo_id: str, column: str, key: str) -> None:
+    """Give a photo record a key the server would never make (the API role cannot update photos
+    on PostgreSQL, so this is done as the database owner there)."""
+    if is_sqlite:
+        from app.models import ItemPhoto
+
+        with SessionLocal.begin() as db:
+            setattr(db.get(ItemPhoto, photo_id), column, key)
+        return
+    from tests.test_pg_roles import connect
+
+    with connect() as admin:
+        admin.execute(f"UPDATE dolab.item_photos SET {column} = %s WHERE id = %s", (key, photo_id))
+
+
+@pytest.mark.parametrize("not_a_photo_key", ["u/x.jpg", "newline"])
+def test_h1_a_key_that_is_not_a_photo_key_never_reaches_storage(client, signup, monkeypatch, waits, not_a_photo_key):
+    headers = signup()
+    item_id = new_item(client, headers)
+    first = upload(client, headers, item_id).json()
+    second = upload(client, headers, item_id).json()
+    first_keys, second_keys = photo_keys(first["id"]), photo_keys(second["id"])
+    real_original = first_keys[0]
+    bad = real_original + "\n" if not_a_photo_key == "newline" else "u/x.jpg"
+    if bad == "u/x.jpg":
+        storage.save(bad, b"not a photo: must survive")  # a file that passes the general key check
+    set_photo_key(first["id"], "original_key", bad)
+    calls = storage_that(monkeypatch, {})
+    try:
+        assert client.delete(f"/items/{item_id}", headers=headers).status_code == 204
+        assert bad not in calls  # never sent to storage
+        good = [first_keys[1], *second_keys]
+        assert sorted(calls) == sorted(good)  # the other files were all deleted
+        assert queued() == [bad]  # kept in the queue for the job, which marks it invalid_key
+        if bad == "u/x.jpg":
+            assert storage.list_keys("u/") == ["u/x.jpg"]
+    finally:
+        monkeypatch.undo()
+        if bad == "u/x.jpg":
+            storage.delete("u/x.jpg")
+
+
+def test_l5_a_partly_saved_thumbnail_is_removed_and_the_upload_error_kept(client, signup, monkeypatch):
+    headers = signup()
+    item_id = new_item(client, headers)
+    real_save = storage.save
+
+    def thumb_saved_then_response_lost(key, data):
+        real_save(key, data)
+        if key.endswith("_thumb.jpg"):
+            raise StorageUnavailable("connection reset after the object was stored")
+
+    monkeypatch.setattr(storage, "save", thumb_saved_then_response_lost)
+    response = upload(client, headers, item_id)
+    assert response.status_code == 503  # the upload's own error
+    assert stored_files(client, headers) == []  # neither the original nor the thumbnail is left
+    assert client.get(f"/items/{item_id}/photos", headers=headers).json() == []
+    assert queued() == []

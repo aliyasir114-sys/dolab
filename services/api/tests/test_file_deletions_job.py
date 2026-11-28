@@ -98,13 +98,25 @@ class FakeQueue:
         self.claimed.update(k for k, _ in due)
         return due
 
+    lost: set = set()  # rows another worker has taken over
+
+    def hold(self, key):
+        self.calls.append(("hold", key))
+        return key not in self.lost
+
     def done(self, key):
         self.calls.append(("done", key))
+        if key in self.lost:
+            return False
         del self.rows[key]
+        return True
 
     def failed(self, key, attempts, error, wait=None):
         self.calls.append(("failed", key, attempts, error) + ((wait,) if wait is not None else ()))
+        if key in self.lost:
+            return False
         self.rows[key] = attempts + 1
+        return True
 
     def commit(self):
         self.calls.append(("commit",))
@@ -162,7 +174,8 @@ def test_a_batch_that_fails_entirely_stops_the_run():
 
 INVALID = ["../etc/passwd", "/etc/passwd", "2026/01/02/6f1c0d2e-0000-4000-8000-000000000001.json",
            "u/x.jpg", "6f1c0d2e-0000-4000-8000-000000000001/../../x_original.jpg", "", "a" * 600,
-           "6f1c0d2e-0000-4000-8000-000000000001/6f1c0d2e-0000-4000-8000-0000000000aa_original.exe"]
+           "6f1c0d2e-0000-4000-8000-000000000001/6f1c0d2e-0000-4000-8000-0000000000aa_original.exe",
+           "6f1c0d2e-0000-4000-8000-000000000001/6f1c0d2e-0000-4000-8000-0000000000aa_original.jpg\n"]
 
 
 class RecordingDeleter(FakeDeleter):
@@ -275,3 +288,13 @@ def test_logs_carry_no_keys(caplog):
     J.run(FakeQueue({k: 0 for k in ks}), FakeDeleter(fail={ks[0]}))
     assert "deleted 1, failed 1" in caplog.text
     assert not any(k in caplog.text or k.split("/")[0] in caplog.text for k in ks)
+
+
+def test_a_row_taken_over_by_another_worker_is_left_alone():
+    ks = keys(3)
+    queue, deleter = FakeQueue({k: 0 for k in ks}), RecordingDeleter()
+    queue.lost = {ks[1]}
+    report = J.run(queue, deleter)
+    assert ks[1] not in deleter.asked  # never sent to storage by the worker that lost it
+    assert report.deleted == 2 and report.lease_lost == 1 and ks[1] in queue.rows
+    assert J.exit_code(report) == J.EXIT_PROBLEMS

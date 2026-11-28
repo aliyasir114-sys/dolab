@@ -14,7 +14,8 @@
 - Privileges (and nothing else on this table):
   dolab_deleter        INSERT (inside apply_deletion);
   dolab_app            DELETE, and SELECT on key only (it removes the rows of files it deleted);
-  dolab_file_cleaner   SELECT and DELETE, and UPDATE on attempts, next_try_at and last_error only
+  dolab_file_cleaner   SELECT and DELETE, and UPDATE on attempts, next_try_at, last_error and
+                       lease_token only
                        (the queue job leases, reschedules and removes rows; it cannot change a
                        row's key or created_at; review of #60, M3).
   The downgrade refuses while the queue holds any row, so queued files are never dropped.
@@ -53,33 +54,41 @@ BEGIN
     END IF;
     CASE p_entity_type
     WHEN 'item' THEN
-        IF NOT EXISTS (SELECT 1 FROM dolab.items i WHERE i.id = v_entity AND i.user_id = v_user) THEN
+        -- Lock the item first: a photo insert needs FOR KEY SHARE on it, which FOR UPDATE blocks.
+        -- An upload already in progress is waited for (and its photo then deleted and queued);
+        -- one that comes after waits, then fails on the foreign key.
+        PERFORM 1 FROM dolab.items i WHERE i.id = v_entity AND i.user_id = v_user FOR UPDATE;
+        IF NOT FOUND THEN
             RAISE EXCEPTION 'apply_deletion: no such item for this user' USING ERRCODE = 'no_data_found';
         END IF;
-        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM dolab.item_photos p
-            CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
-            WHERE p.item_id = v_entity;
+        -- The keys come from the rows this statement deletes, so every deleted photo is queued.
+        WITH gone AS (DELETE FROM dolab.item_photos WHERE item_id = v_entity RETURNING original_key, thumb_key)
+        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM gone
+            CROSS JOIN LATERAL (VALUES (gone.original_key), (gone.thumb_key)) AS k(key);
         DELETE FROM dolab.wear_logs WHERE item_id = v_entity;
         DELETE FROM dolab.item_status_changes WHERE item_id = v_entity;
         DELETE FROM dolab.donation_items WHERE item_id = v_entity;
-        DELETE FROM dolab.item_photos WHERE item_id = v_entity;
         DELETE FROM dolab.items WHERE id = v_entity;
     WHEN 'photo' THEN
         IF NOT EXISTS (SELECT 1 FROM dolab.item_photos p WHERE p.id = v_entity AND p.user_id = v_user) THEN
             RAISE EXCEPTION 'apply_deletion: no such photo for this user' USING ERRCODE = 'no_data_found';
         END IF;
-        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM dolab.item_photos p
-            CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
-            WHERE p.id = v_entity;
-        DELETE FROM dolab.item_photos WHERE id = v_entity;
+        WITH gone AS (DELETE FROM dolab.item_photos WHERE id = v_entity RETURNING original_key, thumb_key)
+        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM gone
+            CROSS JOIN LATERAL (VALUES (gone.original_key), (gone.thumb_key)) AS k(key);
     WHEN 'user' THEN
-        IF v_entity <> v_user OR NOT EXISTS (SELECT 1 FROM dolab.users u WHERE u.id = v_user) THEN
+        -- Lock the account first: every new row of the user (a photo, an item, ...) needs
+        -- FOR KEY SHARE on it, which FOR UPDATE blocks. Locks are always taken users before items.
+        IF v_entity <> v_user THEN
             RAISE EXCEPTION 'apply_deletion: no such account' USING ERRCODE = 'no_data_found';
         END IF;
-        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM dolab.item_photos p
-            CROSS JOIN LATERAL (VALUES (p.original_key), (p.thumb_key)) AS k(key)
-            WHERE p.user_id = v_user;
-        DELETE FROM dolab.item_photos WHERE user_id = v_user;
+        PERFORM 1 FROM dolab.users u WHERE u.id = v_user FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'apply_deletion: no such account' USING ERRCODE = 'no_data_found';
+        END IF;
+        WITH gone AS (DELETE FROM dolab.item_photos WHERE user_id = v_user RETURNING original_key, thumb_key)
+        SELECT array_agg(DISTINCT k.key::text) INTO v_keys FROM gone
+            CROSS JOIN LATERAL (VALUES (gone.original_key), (gone.thumb_key)) AS k(key);
         DELETE FROM dolab.donation_items
             WHERE donation_id IN (SELECT d.id FROM dolab.donations d WHERE d.user_id = v_user);
         DELETE FROM dolab.donations WHERE user_id = v_user;
@@ -126,15 +135,21 @@ def upgrade() -> None:
         sa.Column("next_try_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("last_error", sa.String(40), nullable=True),
+        # The queue job's lease: a fresh token for each batch it takes; only the holder of the
+        # current token may delete or reschedule the row (review of #60, Medium 4).
+        sa.Column("lease_token", sa.String(36), nullable=True),
         schema="dolab",
     )
     op.create_index("ix_pending_file_deletions_next_try_at", "pending_file_deletions", ["next_try_at"],
                     schema="dolab")
     op.execute("GRANT INSERT ON TABLE dolab.pending_file_deletions TO dolab_deleter")
+    # apply_deletion locks the item it deletes (SELECT ... FOR UPDATE needs UPDATE on one column),
+    # as 0005 did for users.updated_at; the function never updates it.
+    op.execute("GRANT UPDATE (updated_at) ON TABLE dolab.items TO dolab_deleter")
     op.execute("GRANT DELETE ON TABLE dolab.pending_file_deletions TO dolab_app")
     op.execute("GRANT SELECT (key) ON TABLE dolab.pending_file_deletions TO dolab_app")
     op.execute("GRANT SELECT, DELETE ON TABLE dolab.pending_file_deletions TO dolab_file_cleaner")
-    op.execute("GRANT UPDATE (attempts, next_try_at, last_error) ON TABLE dolab.pending_file_deletions "
+    op.execute("GRANT UPDATE (attempts, next_try_at, last_error, lease_token) ON TABLE dolab.pending_file_deletions "
                "TO dolab_file_cleaner")
     replace_deleter_function(op.execute, APPLY_DELETION, APPLY_SIGNATURE, ["dolab_app"])
 
@@ -153,5 +168,6 @@ def downgrade() -> None:
             "dolab.pending_file_deletions. Process them first (python -m app.jobs.file_deletions, until "
             "its --dry-run reports nothing due and the queue is empty), then downgrade again.")
     replace_deleter_function(op.execute, APPLY_DELETION_0005, APPLY_SIGNATURE, ["dolab_app"])
+    op.execute("REVOKE UPDATE (updated_at) ON TABLE dolab.items FROM dolab_deleter")
     op.drop_index("ix_pending_file_deletions_next_try_at", table_name="pending_file_deletions", schema="dolab")
     op.drop_table("pending_file_deletions", schema="dolab")

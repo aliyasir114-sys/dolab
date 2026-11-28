@@ -7,7 +7,7 @@ from ..media import VARIANTS, InvalidImage, process_image, signature_is_valid, s
 from ..models import ItemPhoto, new_id
 from ..schemas import PhotoOut
 from ..deletion import delete_with_ledger
-from ..services import delete_files_after_commit, delete_photo_files
+from ..services import delete_files_after_commit, delete_photo_files, delete_upload_files
 from ..storage import StorageUnavailable, storage
 from .items import _own_item
 
@@ -63,11 +63,10 @@ def upload_photo(item_id: str, file: UploadFile, user: CurrentUser, db: Db) -> P
         storage.save(original_key, processed.original)
         storage.save(thumb_key, processed.thumb)
     except StorageUnavailable as error:
-        # Best effort: do not leave the original behind if only the thumbnail failed.
-        try:
-            storage.delete(original_key)
-        except Exception:  # noqa: BLE001 - best effort; the upload's own error is the one reported
-            pass
+        # Best effort, and both files: the thumbnail may have been stored even though its save
+        # reported a failure (a lost response), and the original may be there too. The cleanup
+        # never raises, so this upload's own error is the one reported (review of #60, Low 5).
+        delete_upload_files([original_key, thumb_key])
         raise _unavailable() from error
     photo = ItemPhoto(
         id=photo_id,

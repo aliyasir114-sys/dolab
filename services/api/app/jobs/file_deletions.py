@@ -27,7 +27,11 @@ batch: it stays queued with last_error "invalid_key", is put back the longest wa
 and makes the run exit 1 so someone looks at it. It is never dropped.
 
 Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR UPDATE SKIP
-LOCKED, so two runs never take the same row) and moves their next_try_at LEASE ahead, and commits.
+LOCKED, so two runs never take the same row), moves their next_try_at LEASE ahead, writes a fresh
+lease_token on them, and commits. The token fences a worker whose lease ran out (review of #60,
+Medium 4): before each file the worker renews its lease on that row and checks the token is still
+its own, and it deletes or reschedules a row only where the token still matches. A worker that
+lost a row to another one leaves the file and the row alone, and counts it as lease_lost.
 No transaction stays open and no row lock is held while files are deleted, so the server's own
 removal of queue rows never waits on the job. A run that stops part-way leaves its leased rows
 to come due again when the lease ends; deleting a file twice is harmless. Rows are first due
@@ -46,6 +50,7 @@ import argparse
 import logging
 import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -177,9 +182,11 @@ def build_deleter(config: Config) -> FileDeleter:
 class Queue(Protocol):
     def claim(self, limit: int) -> list[tuple[str, int]]: ...
 
-    def done(self, key: str) -> None: ...
+    def hold(self, key: str) -> bool: ...
 
-    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> None: ...
+    def done(self, key: str) -> bool: ...
+
+    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> bool: ...
 
     def due(self) -> int: ...
 
@@ -202,22 +209,32 @@ class PgQueue:
             raise Refused(f"the job must connect as {ROLE}, not {session}")
 
     def claim(self, limit: int) -> list[tuple[str, int]]:
-        """Lease up to `limit` due rows: one statement, committed at once."""
+        """Lease up to `limit` due rows under a fresh token: one statement, committed at once."""
+        self.token = str(uuid.uuid4())
         rows = self.conn.execute(
-            "UPDATE dolab.pending_file_deletions q SET next_try_at = now() + make_interval(secs => %s) "
+            "UPDATE dolab.pending_file_deletions q SET next_try_at = now() + make_interval(secs => %s), "
+            "lease_token = %s "
             "FROM (SELECT key FROM dolab.pending_file_deletions WHERE next_try_at <= now() "
             "      ORDER BY next_try_at, key LIMIT %s FOR UPDATE SKIP LOCKED) due "
-            "WHERE q.key = due.key RETURNING q.key, q.attempts", (LEASE, limit)).fetchall()
+            "WHERE q.key = due.key RETURNING q.key, q.attempts", (LEASE, self.token, limit)).fetchall()
         return sorted(rows)
 
-    def done(self, key: str) -> None:
-        self.conn.execute("DELETE FROM dolab.pending_file_deletions WHERE key = %s", (key,))
+    def hold(self, key: str) -> bool:
+        """Renew this worker's lease on the row; False if another worker holds it now."""
+        return self.conn.execute(
+            "UPDATE dolab.pending_file_deletions SET next_try_at = now() + make_interval(secs => %s) "
+            "WHERE key = %s AND lease_token = %s", (LEASE, key, self.token)).rowcount == 1
 
-    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> None:
-        self.conn.execute(
+    def done(self, key: str) -> bool:
+        return self.conn.execute("DELETE FROM dolab.pending_file_deletions WHERE key = %s AND lease_token = %s",
+                                 (key, self.token)).rowcount == 1
+
+    def failed(self, key: str, attempts: int, error: str, wait: int | None = None) -> bool:
+        return self.conn.execute(
             "UPDATE dolab.pending_file_deletions SET attempts = attempts + 1, "
-            "next_try_at = now() + make_interval(secs => %s), last_error = %s WHERE key = %s",
-            (wait_after(attempts) if wait is None else wait, error[:40], key))
+            "next_try_at = now() + make_interval(secs => %s), last_error = %s "
+            "WHERE key = %s AND lease_token = %s",
+            (wait_after(attempts) if wait is None else wait, error[:40], key, self.token)).rowcount == 1
 
     def due(self) -> int:
         return self.conn.execute(
@@ -241,18 +258,20 @@ class Report:
     deleted: int = 0
     failed: int = 0  # storage failures
     invalid: int = 0  # keys that are not photo keys: never sent to storage
+    lease_lost: int = 0  # rows another worker took over: neither deleted nor rescheduled here
     stopped_early: bool = False  # a whole batch failed: storage looks down
     due: int | None = None  # dry run only
     stale: int = 0
 
     @property
     def clean(self) -> bool:
-        return self.failed == 0 and self.invalid == 0 and self.stale == 0
+        return self.failed == 0 and self.invalid == 0 and self.lease_lost == 0 and self.stale == 0
 
     def summary(self) -> str:
         if self.dry_run:
             return f"dry run: {self.due} files due, {self.stale} queued for more than {STALE_HOURS} hours"
-        return (f"claimed {self.claimed}, deleted {self.deleted}, failed {self.failed}, invalid keys {self.invalid}"
+        return (f"claimed {self.claimed}, deleted {self.deleted}, failed {self.failed}, invalid keys {self.invalid}, "
+                f"lease lost {self.lease_lost}"
                 f"{' (stopped: storage looks down)' if self.stopped_early else ''}; "
                 f"{self.stale} queued for more than {STALE_HOURS} hours")
 
@@ -272,18 +291,28 @@ def run(queue: Queue, deleter: FileDeleter, *, dry_run: bool = False, batch: int
         for key, attempts in rows:
             if not is_photo_key(key):
                 # Never sent to storage; kept, set aside for the longest wait, and reported.
-                queue.failed(key, attempts, "invalid_key", wait=MAX_WAIT)
-                report.invalid += 1
+                if queue.failed(key, attempts, "invalid_key", wait=MAX_WAIT):
+                    report.invalid += 1
+                else:
+                    report.lease_lost += 1
+                continue
+            if not queue.hold(key):  # another worker took this row over: leave it to that worker
+                report.lease_lost += 1
                 continue
             tried += 1
             try:
                 deleter.delete(key)
             except Exception as error:  # noqa: BLE001 - one file must not stop the others
-                queue.failed(key, attempts, "invalid_key" if isinstance(error, ValueError) else type(error).__name__)
-                failed_here += 1
+                if queue.failed(key, attempts,
+                                "invalid_key" if isinstance(error, ValueError) else type(error).__name__):
+                    failed_here += 1
+                else:
+                    report.lease_lost += 1
                 continue
-            queue.done(key)
-            report.deleted += 1
+            if queue.done(key):
+                report.deleted += 1
+            else:
+                report.lease_lost += 1  # deleted twice is harmless; the other worker owns the row
         report.failed += failed_here
         if tried and failed_here == tried:
             report.stopped_early = True  # every file sent to storage failed: storage is down
@@ -297,6 +326,8 @@ def _finish(report: Report) -> Report:
         log.error("ALERT %d photo files could not be deleted; rescheduled", report.failed)
     if report.invalid:
         log.error("ALERT %d queued keys are not photo keys; not deleted, kept in the queue", report.invalid)
+    if report.lease_lost:
+        log.error("ALERT %d rows were taken over by another run after this run's lease ran out", report.lease_lost)
     if report.stale:
         log.error("ALERT %d photo files queued for more than %d hours", report.stale, STALE_HOURS)
     log.info(report.summary())

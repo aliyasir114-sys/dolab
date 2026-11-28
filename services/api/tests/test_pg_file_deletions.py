@@ -96,7 +96,7 @@ def test_the_file_cleaner_has_the_queue_and_nothing_else():
                                                "AND attnum > 0 AND NOT attisdropped", f"dolab.{QUEUE}")
                      if value(admin, "SELECT has_column_privilege(%s, %s, %s, 'UPDATE')", E.FILE_CLEANER,
                               f"dolab.{QUEUE}", c)}
-        assert updatable == {"attempts", "next_try_at", "last_error"}
+        assert updatable == {"attempts", "next_try_at", "last_error", "lease_token"}
         functions = [f for (f,) in rows(admin, "SELECT p.oid::regprocedure::text FROM pg_proc p "
                                                "JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dolab'")]
         assert functions
@@ -469,3 +469,207 @@ def test_the_connection_limit_is_a_connection_failure(db_client, monkeypatch, tm
     assert "could not connect to the database (OperationalError)" in caplog.text
     assert queue_rows() == before
     assert J.main([]) == J.EXIT_OK and queue_rows() == []  # with a free connection it works
+
+
+# ------------------------------------------------------------------ concurrent upload and deletion (review of #60, High 2)
+# apply_deletion locks the item (item deletion) or the account (account deletion) FOR UPDATE
+# before it takes stock, and queues the keys returned by the DELETE of the photo rows itself.
+# A photo insert needs FOR KEY SHARE on both its item and its user, which FOR UPDATE blocks.
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+import psycopg  # noqa: E402
+from psycopg import errors as pg_errors  # noqa: E402
+
+
+def app_connection(name: str):
+    """The API role, in an explicit transaction, named so pg_stat_activity can find it."""
+    return psycopg.connect(_conninfo(E.APP), autocommit=False, application_name=name)
+
+
+def waiting_on_a_lock(name: str, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with connect() as admin:
+            if value(admin, "SELECT count(*) FROM pg_stat_activity WHERE application_name = %s "
+                            "AND wait_event_type = 'Lock'", name):
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def insert_photo(conn, item_id: str, user_id: str) -> list[str]:
+    """What an upload's commit writes: one photo row (its files are not needed here)."""
+    photo_id = str(uuid.uuid4())
+    keys = [f"{user_id}/{photo_id}_original.jpg", f"{user_id}/{photo_id}_thumb.jpg"]
+    conn.execute("INSERT INTO dolab.item_photos (id, item_id, user_id, original_key, thumb_key, content_type, "
+                 "width, height, size_bytes, created_at) VALUES (%s, %s, %s, %s, %s, 'image/jpeg', 1, 1, 1, now())",
+                 (photo_id, item_id, user_id, *keys))
+    return keys
+
+
+def photo_rows(where: str, value_: str) -> list[tuple]:
+    with connect() as admin:
+        return rows(admin, f"SELECT original_key, thumb_key FROM dolab.item_photos WHERE {where} = %s", value_)
+
+
+def in_thread(work):
+    outcome: dict = {}
+
+    def run():
+        try:
+            outcome["value"] = work()
+        except Exception as error:  # noqa: BLE001 - reported to the test
+            outcome["error"] = error
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, outcome
+
+
+def deletion(kind: str, entity: str, user_id: str, name: str):
+    def work():
+        with app_connection(name) as conn:
+            keys = [k for (k,) in conn.execute("SELECT dolab.apply_deletion(%s, %s::uuid, %s::uuid)",
+                                               (kind, entity, user_id)).fetchall()]
+            conn.commit()
+            return keys
+    return work
+
+
+def every_deleted_photo_is_queued(expected_keys: set[str]) -> None:
+    with connect() as admin:
+        in_queue = {k for (k,) in rows(admin, "SELECT key FROM dolab.pending_file_deletions")}
+    assert expected_keys <= in_queue, sorted(expected_keys - in_queue)
+
+
+@pytest.mark.parametrize("kind", ["item", "user"])
+def test_h2_an_upload_in_progress_is_waited_for_and_its_photo_queued(db_client, signup, kind):
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    before = {k for row in photo_rows("item_id", item_id) for k in row}
+    entity = item_id if kind == "item" else user_id
+    with app_connection("dz-upload") as up:
+        new_keys = insert_photo(up, item_id, user_id)  # not committed yet: holds FOR KEY SHARE
+        thread, outcome = in_thread(deletion(kind, entity, user_id, "dz-delete"))
+        assert waiting_on_a_lock("dz-delete")  # the deletion waits for the upload
+        up.commit()  # the upload's record lands now
+    thread.join(20)
+    assert "error" not in outcome, outcome.get("error")
+    assert set(outcome["value"]) == before | set(new_keys)  # the new photo was deleted too
+    assert photo_rows("item_id", item_id) == []
+    every_deleted_photo_is_queued(before | set(new_keys))
+
+
+@pytest.mark.parametrize("kind", ["item", "user"])
+def test_h2_an_upload_after_the_lock_waits_and_then_fails(db_client, signup, kind):
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    before = {k for row in photo_rows("item_id", item_id) for k in row}
+    entity = item_id if kind == "item" else user_id
+    with app_connection("dz-delete") as deleting:
+        deleted = [k for (k,) in deleting.execute("SELECT dolab.apply_deletion(%s, %s::uuid, %s::uuid)",
+                                                  (kind, entity, user_id)).fetchall()]
+        # The deletion holds its locks, not committed yet; now the upload tries to save its photo.
+
+        def upload_late():
+            with app_connection("dz-upload") as up:
+                insert_photo(up, item_id, user_id)
+                up.commit()
+
+        thread, outcome = in_thread(upload_late)
+        assert waiting_on_a_lock("dz-upload")  # the upload waits for the deletion
+        deleting.commit()
+    thread.join(20)
+    assert isinstance(outcome.get("error"), pg_errors.ForeignKeyViolation)  # its item is gone
+    assert set(deleted) == before
+    assert photo_rows("item_id", item_id) == [] and photo_rows("user_id", user_id) == []
+    every_deleted_photo_is_queued(before)
+
+
+def test_h2_many_uploads_racing_an_item_deletion_lose_no_key(db_client, signup):
+    """Uploads committing at random points around the deletion: whatever each one's fate, no
+    photo row is deleted without its keys in the queue, and none is left behind."""
+    headers = signup()
+    user_id = db_client.get("/me", headers=headers).json()["id"]
+    item_id = new_item(db_client, headers)
+    upload(db_client, headers, item_id)
+    start = threading.Barrier(9)
+    saved: list[set] = []
+
+    def an_upload(n):
+        def work():
+            with app_connection(f"dz-up-{n}") as up:
+                start.wait()
+                time.sleep(n * 0.01)
+                keys = insert_photo(up, item_id, user_id)
+                up.commit()
+                saved.append(set(keys))
+        return work
+
+    threads = [in_thread(an_upload(n)) for n in range(8)]
+
+    def delete_after_barrier():
+        start.wait()
+        time.sleep(0.03)
+        return deletion("item", item_id, user_id, "dz-delete")()
+
+    deleting = in_thread(delete_after_barrier)
+    for thread, _ in [*threads, deleting]:
+        thread.join(30)
+    assert "error" not in deleting[1], deleting[1].get("error")
+    for _, outcome in threads:  # an upload either landed before the deletion or failed on the key
+        assert "error" not in outcome or isinstance(outcome["error"], pg_errors.ForeignKeyViolation)
+    assert photo_rows("item_id", item_id) == []
+    every_deleted_photo_is_queued(set(deleting[1]["value"]) | set().union(*saved))
+
+
+# ------------------------------------------------------------------ an expired lease (review of #60, Medium 4)
+
+def test_m4_a_worker_whose_lease_ran_out_changes_nothing(db_client, tmp_path):
+    media = tmp_path / "media"
+    keys = sorted(photo_key() for _ in range(3))
+    for key in keys:
+        (media / key).parent.mkdir(parents=True, exist_ok=True)
+        (media / key).write_bytes(b"jpeg")
+        admin_enqueue(key)
+    second = cleaner_queue()
+    taken_over: list[tuple[str, int]] = []
+    sent: list[str] = []
+
+    class SlowThenOvertaken:
+        """Worker 1's storage: while it deletes its first file, its lease runs out and worker 2
+        takes the whole batch over."""
+
+        def __init__(self):
+            self.inner = J.LocalFileDeleter(str(media))
+
+        def delete(self, key):
+            sent.append(key)
+            if not taken_over:
+                make_due()  # worker 1's lease has ended
+                taken_over.extend(second.claim(10))
+            self.inner.delete(key)
+
+    try:
+        first = run_job(SlowThenOvertaken())
+        # Worker 1 deleted its first file (harmless) but could not remove the row, and never
+        # sent the other two files to storage: worker 2 holds them.
+        assert sent == keys[:1]
+        assert (first.deleted, first.lease_lost, first.failed) == (0, 3, 0)
+        assert J.exit_code(first) == J.EXIT_PROBLEMS
+        assert sorted(k for k, _ in taken_over) == keys
+        assert [r[1] for r in queue_rows()] == [0, 0, 0]  # attempts untouched by worker 1
+        # Worker 2 finishes the batch it now holds.
+        for key, _attempts in taken_over:
+            assert second.hold(key)
+            J.LocalFileDeleter(str(media)).delete(key)
+            assert second.done(key)
+    finally:
+        second.close()
+    assert queue_rows() == [] and not any((media / k).exists() for k in keys)

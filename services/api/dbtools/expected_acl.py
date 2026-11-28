@@ -94,8 +94,10 @@ COLUMNS: dict[tuple[str, str], dict[str, set[str]]] = {
 COLUMNS[("users", "updated_at")] = {DELETER: {"UPDATE"}}
 # Migration 0007: the API reads only the key of a queued file, to remove its row.
 COLUMNS[("pending_file_deletions", "key")] = {APP: {"SELECT"}}
+# apply_deletion locks the item it deletes (migration 0007), as it does the user.
+COLUMNS[("items", "updated_at")] = {DELETER: {"UPDATE"}}
 # The queue job may change only these (review of #60, M3): never a row's key or created_at.
-for _column in ("attempts", "next_try_at", "last_error"):
+for _column in ("attempts", "next_try_at", "last_error", "lease_token"):
     COLUMNS[("pending_file_deletions", _column)] = {FILE_CLEANER: {"UPDATE"}}
 
 # Sequences, functions and standalone types in dolab. Functions: the deleter functions of

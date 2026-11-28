@@ -251,3 +251,4 @@ class PendingFileDeletion(Base):
     next_try_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(40))
+    lease_token: Mapped[str | None] = mapped_column(String(36))

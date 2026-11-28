@@ -34,7 +34,7 @@ from .. import clock
 from ..db import SessionLocal
 from ..models import ItemPhoto
 from ..storage import Storage, StorageUnavailable, storage as default_storage
-from ..storage_keys import PHOTO_KEY  # shared with the file deletion job
+from ..storage_keys import is_photo_key  # the one photo-key check, shared with the file deletion job
 
 log = logging.getLogger("dolab.jobs.orphans")
 
@@ -106,7 +106,7 @@ def sweep(
 
     candidates: list[str] = []
     for obj in objects:
-        if not PHOTO_KEY.match(obj.key):
+        if not is_photo_key(obj.key):
             report.ignored_other += 1
         elif now - obj.modified < min_age:
             report.too_recent += 1

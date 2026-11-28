@@ -10,6 +10,7 @@ from .media import signed_path
 from .models import Item, ItemPhoto, ItemStatusChange, PendingFileDeletion
 from .schemas import ItemOut
 from .storage import StorageUnavailable, storage
+from .storage_keys import is_photo_key
 
 log = logging.getLogger("dolab.storage")
 
@@ -75,9 +76,15 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
     never keys (a key carries the user id).
     """
     deleted: list[str] = []
+    invalid = 0
     spent = 0.0  # seconds spent on failures
     failed_in_a_row = 0
     for key in keys:
+        if not is_photo_key(key):
+            # Not a photo key as the server makes it: never sent to storage, never removed from
+            # the queue. The queue job marks its row invalid_key (review of #60, High 1).
+            invalid += 1
+            continue
         ok = False
         invalid_key = False
         for attempt in range(FILE_DELETE_TRIES):
@@ -117,6 +124,8 @@ def delete_file_keys(db: Session, keys: list[str]) -> int:
         except Exception as error:  # noqa: BLE001 - the queue job finds the file gone and removes the row
             db.rollback()
             log.warning("queue rows of %d deleted photo files not removed (%s)", len(deleted), type(error).__name__)
+    if invalid:
+        log.warning("%d queued keys are not photo keys (invalid_key); not sent to storage, kept in the queue", invalid)
     left = len(keys) - len(deleted)
     if left:
         log.warning("%d of %d photo files left for the file deletion queue", left, len(keys))
@@ -152,14 +161,23 @@ def delete_photo_files(photos: list[ItemPhoto]) -> None:
     as left, and the other files are still tried. Logs counts and classes only, never keys (a
     key carries the user id).
     """
+    delete_upload_files([key for photo in photos for key in (photo.original_key, photo.thumb_key)])
+
+
+def delete_upload_files(keys: list[str]) -> None:
+    """Best-effort removal of the files of an upload that did not complete (see above): every
+    key is tried, a file already gone is fine, and nothing here ever raises."""
     left, errors = 0, set()
-    for photo in photos:
-        for key in (photo.original_key, photo.thumb_key):
-            try:
-                storage.delete(key)
-            except Exception as error:  # noqa: BLE001 - StorageUnavailable, ValueError (invalid key), anything
-                left += 1
-                errors.add(type(error).__name__)
+    for key in keys:
+        if not is_photo_key(key):
+            left += 1
+            errors.add("invalid_key")  # never sent to storage
+            continue
+        try:
+            storage.delete(key)
+        except Exception as error:  # noqa: BLE001 - StorageUnavailable, ValueError (invalid key), anything
+            left += 1
+            errors.add(type(error).__name__)
     if left:
         log.warning("%d photo files of a failed upload left in storage for the orphan job (%s)",
                     left, ", ".join(sorted(errors)))
