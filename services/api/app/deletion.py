@@ -82,7 +82,10 @@ def python_deletion(db: Session, entity_type: str, entity_id: str, user_id: str)
 
 
 # A newly queued file is first due for the queue job this long after the deletion, so the job
-# never takes it while the server's immediate attempt is still working on it (migration 0007).
+# rarely takes it while the server's immediate attempt is still working on it (migration 0007).
+# Rarely, not never: an immediate attempt slowed by storage timeouts can still be running when
+# the row comes due. The overlap is then a second delete of the same key, harmless because a
+# queued key is never reused; and the server's removal of the row waits at most its lock timeout.
 FIRST_TRY_DELAY = timedelta(minutes=5)
 
 

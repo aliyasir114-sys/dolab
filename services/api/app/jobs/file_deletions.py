@@ -44,7 +44,10 @@ never reach a newer file; deleting a missing object is a no-op.
 No transaction stays open and no row lock is held while files are deleted, so the server's own
 removal of queue rows never waits on the job. A run that stops part-way leaves its leased rows
 to come due again when the lease ends; deleting a file twice is harmless. Rows are first due
-five minutes after the deletion, so the job never takes one the server is still working on.
+five minutes after the deletion, which makes it unlikely, not impossible, that the job takes one
+the server's immediate attempt is still working on (that attempt can be slowed by storage
+timeouts). If it does, the same key is deleted twice: harmless, because a queued key is never
+reused.
 Safe to run again or twice at once.
 
 --dry-run changes nothing: it counts the rows due and the rows older than 24 hours.

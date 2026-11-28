@@ -9,8 +9,10 @@
   go through it, so neither path can commit a deletion without queueing its files. Files are
   deleted from storage only after the commit, by the server (the immediate attempt) and later by
   the queue job (python -m app.jobs.file_deletions, not scheduled anywhere yet). A new row is
-  first due five minutes after the deletion (app.deletion.FIRST_TRY_DELAY on SQLite), so the job never takes a row
-  while the server's immediate attempt is still working on it (review of #60, M1).
+  first due five minutes after the deletion (app.deletion.FIRST_TRY_DELAY on SQLite), so the job
+  rarely takes a row while the server's immediate attempt is still working on it (review of #60,
+  M1). Rarely, not never: an attempt slowed by storage timeouts can overlap; that is a second
+  delete of the same key, harmless because a queued key is never reused.
 - Privileges (and nothing else on this table):
   dolab_deleter        INSERT (inside apply_deletion);
   dolab_app            DELETE, and SELECT on key only (it removes the rows of files it deleted);
