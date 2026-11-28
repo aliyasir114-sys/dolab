@@ -9,10 +9,11 @@ DELETER = "dolab_deleter"
 DEPLOY = "dolab_deploy"
 APP = "dolab_app"
 RECONCILER = "dolab_reconciler"
+FILE_CLEANER = "dolab_file_cleaner"
 
-DOLAB_ROLES = (OWNER, DELETER, DEPLOY, APP, RECONCILER)
-LOGIN_ROLES = (DEPLOY, APP, RECONCILER)
-OPERATING_ROLES = (APP, RECONCILER, DELETER)
+DOLAB_ROLES = (OWNER, DELETER, DEPLOY, APP, RECONCILER, FILE_CLEANER)
+LOGIN_ROLES = (DEPLOY, APP, RECONCILER, FILE_CLEANER)
+OPERATING_ROLES = (APP, RECONCILER, FILE_CLEANER, DELETER)
 
 # Role attributes: (can_login, inherit, connection_limit).
 ROLE_ATTRIBUTES = {
@@ -21,6 +22,7 @@ ROLE_ATTRIBUTES = {
     DEPLOY: (True, False, -1),
     APP: (True, False, -1),
     RECONCILER: (True, False, 2),
+    FILE_CLEANER: (True, False, 2),
 }
 
 # Memberships between DOLAB roles: (granted role, member) -> (inherit, set, admin).
@@ -34,6 +36,7 @@ SCHEMA_ACL = {
     OWNER: {"USAGE", "CREATE"},
     APP: {"USAGE"},
     RECONCILER: {"USAGE"},
+    FILE_CLEANER: {"USAGE"},
     DELETER: {"USAGE"},
 }
 
@@ -58,6 +61,9 @@ TABLES = {
     "rate_limit_events": {APP: _APPEND},
     # Migration 0004: recorded, looked up and removed; never edited.
     "deletion_intents": {APP: _APPEND, DELETER: _DEL},
+    # Migration 0007 (notice #59): queued by apply_deletion, removed by the API once it deleted the
+    # file (SELECT on key only, in COLUMNS), claimed and rescheduled by the queue job.
+    "pending_file_deletions": {APP: _DEL, DELETER: {"INSERT"}, FILE_CLEANER: {"SELECT", "DELETE"}},
     # Migration 0005: written by the deleter functions only; no operating role reads them.
     "reconciled_entries": {DELETER: {"INSERT"}},
     "audit_log": {DELETER: {"INSERT"}},
@@ -86,6 +92,13 @@ COLUMNS: dict[tuple[str, str], dict[str, set[str]]] = {
     (table, column): {DELETER: {"SELECT"}} for table, columns in _DELETER_READS.items() for column in columns
 }
 COLUMNS[("users", "updated_at")] = {DELETER: {"UPDATE"}}
+# Migration 0007: the API reads only the key of a queued file, to remove its row.
+COLUMNS[("pending_file_deletions", "key")] = {APP: {"SELECT"}}
+# apply_deletion locks the item it deletes (migration 0007), as it does the user.
+COLUMNS[("items", "updated_at")] = {DELETER: {"UPDATE"}}
+# The queue job may change only these (review of #60, M3): never a row's key or created_at.
+for _column in ("attempts", "next_try_at", "last_error", "lease_token"):
+    COLUMNS[("pending_file_deletions", _column)] = {FILE_CLEANER: {"UPDATE"}}
 
 # Sequences, functions and standalone types in dolab. Functions: the deleter functions of
 # migrations 0005 and 0006, owned by dolab_deleter; nobody else may run them.

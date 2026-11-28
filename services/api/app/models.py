@@ -236,3 +236,19 @@ class AuditLog(Base):
     entity_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
     counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class PendingFileDeletion(Base):
+    """A photo file whose database rows are deleted but which may still be in storage (plan
+    4.10.3, layer 2; migration 0007). Queued by the deletion itself, in its own transaction;
+    removed once the file is deleted (by the server right after the commit, or by the queue job
+    later). key is the storage key; last_error is an error class name, never a message."""
+
+    __tablename__ = "pending_file_deletions"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_try_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(40))
+    lease_token: Mapped[str | None] = mapped_column(String(36))

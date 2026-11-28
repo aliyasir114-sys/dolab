@@ -20,6 +20,10 @@ SQLite (development and tests only, no PL/pgSQL) the same statements in Python b
 PostgreSQL runs both on the same data and compares every affected table and the file keys
 (tests/test_pg_deleter_functions.py), so they cannot drift apart.
 
+Step 4 also queues the photo files in pending_file_deletions, in the same transaction (plan
+4.10.3, notice #59). Step 5 then deletes them from storage, only after the commit, and removes
+their rows; a file it could not delete keeps its row for the queue job (app.jobs.file_deletions).
+
 Not covered yet: DELETE /me/profile (clearing body measurements) writes no entry, because format
 v1 knows only item, photo and user. Until "profile" is added in a format v2 (a separate request,
 Ali's decision 2026-11-25), a restored backup can bring cleared measurements back; the deletion
@@ -27,17 +31,19 @@ guarantee is not complete before then.
 
 """
 import logging
+from datetime import timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from . import clock, ledger, ledger_store
 from .config import settings
 from .db import SessionLocal, is_sqlite
 from .models import (
-    DeletionIntent, Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, PasswordResetToken, Profile,
-    RefreshToken, User, WearLog,
+    DeletionIntent, Donation, DonationItem, Item, ItemPhoto, ItemStatusChange, PasswordResetToken,
+    PendingFileDeletion, Profile, RefreshToken, User, WearLog,
 )
 
 log = logging.getLogger("dolab.deletion")
@@ -66,7 +72,33 @@ def _keys(photos) -> list[str]:
 
 def python_deletion(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
     """The deletion statements of dolab.apply_deletion, for SQLite. Not committed. Returns the
-    photo file keys to delete. Keep in step with migration 0005 (the parity test checks it)."""
+    photo file keys to delete, each once, and queues them in pending_file_deletions in the same
+    transaction (one INSERT; a key already queued is left as it is). Keep in step with
+    migration 0007 (the parity test checks it)."""
+    keys = list(dict.fromkeys(_delete_rows(db, entity_type, entity_id, user_id)))
+    if keys:
+        _queue_files(db, keys)
+    return keys
+
+
+# A newly queued file is first due for the queue job this long after the deletion, so the job
+# rarely takes it while the server's immediate attempt is still working on it (migration 0007).
+# Rarely, not never: an immediate attempt slowed by storage timeouts can still be running when
+# the row comes due. The overlap is then a second delete of the same key, harmless because a
+# queued key is never reused; and the server's removal of the row waits at most its lock timeout.
+FIRST_TRY_DELAY = timedelta(minutes=5)
+
+
+def _queue_files(db: Session, keys: list[str]) -> None:
+    """SQLite's INSERT ... ON CONFLICT DO NOTHING, one statement for all keys."""
+    now = clock.now()
+    due = now + FIRST_TRY_DELAY
+    db.execute(sqlite_insert(PendingFileDeletion)
+               .values([{"key": k, "attempts": 0, "next_try_at": due, "created_at": now} for k in keys])
+               .on_conflict_do_nothing())
+
+
+def _delete_rows(db: Session, entity_type: str, entity_id: str, user_id: str) -> list[str]:
     if entity_type == "item":
         if db.scalar(select(Item.id).where(Item.id == entity_id, Item.user_id == user_id)) is None:
             raise NotFound("no such item for this user")
@@ -137,7 +169,51 @@ def delete_with_ledger(db: Session, entity_type: str, entity_id: str, user_id: s
             log.exception("deletion intent left behind after a failed ledger write: %s", entry.entry_id)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "deleting is unavailable for a moment, try again shortly",
                             headers={"Retry-After": "30"}) from error
-    keys = apply_deletion(db, entity_type, entity_id, user_id)
-    db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry.entry_id))
-    db.commit()
-    return keys
+    for attempt in range(DELETION_TRIES):
+        try:
+            keys = apply_deletion(db, entity_type, entity_id, user_id)
+            db.execute(delete(DeletionIntent).where(DeletionIntent.entry_id == entry.entry_id))
+            db.commit()
+            return keys
+        except Exception as error:
+            db.rollback()
+            code = _sqlstate(error)
+            if isinstance(error, NotFound) or code == _NO_DATA_FOUND:
+                # The entity went in the meantime: another deletion (an account deletion that
+                # this one waited for) removed it first. Nothing was deleted here; this request
+                # did not happen, so its intent goes and the answer is 404, not an error.
+                _remove_intent_quietly(entry.entry_id)
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"{entity_type} not found") from error
+            if code in _RETRYABLE and attempt + 1 < DELETION_TRIES:
+                # PostgreSQL ended this transaction to break a deadlock: nothing of it was kept
+                # (the session was rolled back above, so the next try starts a new transaction),
+                # the intent and the ledger entry stand, so running the deletion again is safe.
+                # Not hidden: logged, and raised if it recurs.
+                log.warning("deletion retried after PostgreSQL error %s (try %d of %d)", code, attempt + 1,
+                            DELETION_TRIES)
+                continue
+            raise
+    raise AssertionError("unreachable")
+
+
+# A deletion that PostgreSQL rolls back to break a lock cycle is tried once more (review of #60,
+# High 2). With the lock order users before items (apply_deletion, reconcile_apply and the item
+# routes' _own_item), no cycle is known between deletions and the API's own writes; this covers
+# one that is not. Any other error, or a second one, is raised as it is.
+DELETION_TRIES = 2
+# deadlock_detected only. serialization_failure (40001) cannot happen here: the deletion runs in
+# READ COMMITTED, where PostgreSQL does not raise it; it is not retried.
+_RETRYABLE = {"40P01"}
+_NO_DATA_FOUND = "P0002"  # raised by dolab.apply_deletion when the entity is not there
+
+
+def _remove_intent_quietly(entry_id: str) -> None:
+    try:
+        _remove_intent(entry_id)
+    except Exception:  # noqa: BLE001 - an old intent is removed by the reconciliation clean-up
+        log.warning("deletion intent left behind after a 404: %s", entry_id)
+
+
+def _sqlstate(error: BaseException) -> str | None:
+    original = getattr(error, "orig", error)
+    return getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)

@@ -6,10 +6,10 @@ from sqlalchemy.exc import IntegrityError
 
 from .. import clock
 from ..deps import CurrentUser, Db
-from ..models import DonationItem, Item, ItemPhoto, ItemStatusChange, WearLog, new_id
+from ..models import DonationItem, Item, ItemPhoto, ItemStatusChange, User, WearLog, new_id
 from ..schemas import ItemIn, ItemOut, ItemPatch, ItemStatus, WearIn
 from ..deletion import delete_with_ledger
-from ..services import delete_file_keys, item_out, items_out, set_status
+from ..services import delete_files_after_commit, item_out, items_out, set_status
 from ..transitions import path_for, refusal
 
 router = APIRouter(prefix="/items", tags=["wardrobe"])
@@ -20,7 +20,17 @@ _NULLABLE = {"primary_color", "purchase_date", "purchase_price", "currency"}
 
 def _own_item(db: Db, user_id: str, item_id: str, *, lock: bool = False) -> Item:
     """The user's item, or 404. With lock=True the row is locked until commit (PostgreSQL;
-    SQLite ignores it), so concurrent writes to the same item are applied one after another."""
+    SQLite ignores it), so concurrent writes to the same item are applied one after another.
+
+    Lock order (review of #60, High 2): the user's row first (FOR KEY SHARE), then the item
+    (FOR UPDATE) - the order dolab.apply_deletion and reconcile_apply take them in. The rows
+    these requests then insert (a photo, a status change, a wear log) need FOR KEY SHARE on the
+    user anyway; taking it before the item lock means an account deletion and one of these
+    requests wait for each other in one direction only, never in a cycle. If the account is
+    deleted meanwhile, the user's row is gone and the answer is 404, before anything is saved.
+    """
+    if lock and db.scalar(select(User.id).where(User.id == user_id).with_for_update(read=True, key_share=True)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "item not found")
     item = db.get(Item, item_id, with_for_update=lock or None)
     # 404 (not 403) so one user cannot learn which ids belong to another.
     if item is None or item.user_id != user_id:
@@ -91,7 +101,7 @@ def update_item(item_id: str, body: ItemPatch, user: CurrentUser, db: Db) -> Ite
 def delete_item(item_id: str, user: CurrentUser, db: Db) -> Response:
     item = _own_item(db, user.id, item_id)
     # The ledger entry first; the deletion only once it is confirmed (plan 4.10.1).
-    delete_file_keys(delete_with_ledger(db, "item", item.id, user.id))
+    delete_files_after_commit(db, delete_with_ledger(db, "item", item.id, user.id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

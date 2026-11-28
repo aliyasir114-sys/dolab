@@ -3,9 +3,10 @@
     python -m app.jobs.reconcile [--dry-run]
 
 NOT SCHEDULED OR ENABLED ANYWHERE (Ali, 2026-11-26). Before it runs on a schedule in any
-environment, `python -m app.jobs.orphans` must already run there on a schedule, or the
-pending_file_deletions queue must exist: this job deletes database rows only, and the photo files
-of the deletions it completes are removed by the orphan job alone.
+environment, `python -m app.jobs.orphans` must already run there on a schedule, or the file
+deletion queue's job must (`python -m app.jobs.file_deletions`; notice #59): this job deletes
+database rows only. Their photo files are queued by apply_deletion in the same transaction, and
+removed from storage by the queue job or the orphan job, neither of which is scheduled yet.
 
 What it may do, and nothing more:
 - read the deletion ledger (list and get; it has no way to write or delete there) with the

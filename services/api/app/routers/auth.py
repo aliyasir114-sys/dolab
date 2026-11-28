@@ -41,7 +41,7 @@ from ..schemas import (
 from .. import export
 from ..export import export_payload
 from ..deletion import delete_with_ledger
-from ..services import delete_file_keys
+from ..services import delete_files_after_commit
 from ..storage import StorageUnavailable
 from ..security import create_token, hash_password, new_secret_token, token_hash, verify_password
 
@@ -298,7 +298,7 @@ def delete_account(user: CurrentUser, db: Db) -> Response:
     """Delete the account and everything it owns, including photo files (PRD A6). One "user"
     ledger entry covers all of it, written and confirmed before anything is deleted."""
     user_id = user.id
-    delete_file_keys(delete_with_ledger(db, "user", user_id, user_id))
+    delete_files_after_commit(db, delete_with_ledger(db, "user", user_id, user_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

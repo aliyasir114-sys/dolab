@@ -22,7 +22,6 @@ Safety rules:
 """
 import argparse
 import logging
-import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -35,11 +34,10 @@ from .. import clock
 from ..db import SessionLocal
 from ..models import ItemPhoto
 from ..storage import Storage, StorageUnavailable, storage as default_storage
+from ..storage_keys import is_photo_key  # the one photo-key check, shared with the file deletion job
 
 log = logging.getLogger("dolab.jobs.orphans")
 
-_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-PHOTO_KEY = re.compile(rf"^{_UUID}/{_UUID}_(original\.(jpg|png|webp)|thumb\.jpg)$")
 DEFAULT_BATCH = 500
 DEFAULT_MIN_AGE = timedelta(minutes=60)
 # Keys per database query: keeps each IN list small.
@@ -108,7 +106,7 @@ def sweep(
 
     candidates: list[str] = []
     for obj in objects:
-        if not PHOTO_KEY.match(obj.key):
+        if not is_photo_key(obj.key):
             report.ignored_other += 1
         elif now - obj.modified < min_age:
             report.too_recent += 1
@@ -137,7 +135,8 @@ def sweep(
         except (StorageUnavailable, OSError) as error:
             # Both storages raise StorageUnavailable; OSError is caught too, so a storage that
             # lets a disk error through still cannot stop the rest of the batch.
-            log.warning("orphan file could not be deleted, will retry next run: %s (%s)", key, error)
+            # The key is not logged: it carries the user id. The count is in the summary.
+            log.warning("an orphan file could not be deleted, will retry next run (%s)", type(error).__name__)
             report.failed.append(key)
         else:
             report.deleted.append(key)
