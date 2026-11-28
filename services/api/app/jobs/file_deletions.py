@@ -31,13 +31,16 @@ Leasing (review of #60, M1): one short statement takes a batch of due rows (FOR 
 LOCKED, so two runs never take the same row), moves their next_try_at LEASE ahead, writes a fresh
 lease_token on them, and commits. The token fences a worker whose row was taken over (review of #60,
 Medium 4): before each file the worker renews its lease on that row and checks the token is still
-its own, and it deletes or reschedules a row only where the token still matches. What the token
-guarantees: once another worker has leased the row under a new token, the first one changes
-nothing on that row and starts no new storage call for it (lease_lost). What it cannot: a storage
-call the first worker had already started - it passed its last check before the takeover, then
-stopped longer than its lease - can still reach storage after the takeover. That is a second
-delete of the same key, harmless: deleting a missing object is a no-op, and a queued key is never
-reused (it names a photo whose row is gone; every upload makes a new photo id).
+its own, and it deletes or reschedules a row only where the token still matches.
+
+What the token protects is the queue row, and only that: once another worker has leased the row
+under a new token, the first one can no longer delete, reschedule or otherwise change it
+(lease_lost). It does not protect the storage call. The check (hold) comes before the call
+(deleter.delete); a worker paused between the two - longer than its lease, a suspended machine
+say - resumes and makes that call even though another worker has taken the row over meanwhile.
+That second delete of the same key is harmless only because a queued key is never reused: it
+names a photo whose row is already gone, and every upload makes a new photo id, so the call can
+never reach a newer file; deleting a missing object is a no-op.
 No transaction stays open and no row lock is held while files are deleted, so the server's own
 removal of queue rows never waits on the job. A run that stops part-way leaves its leased rows
 to come due again when the lease ends; deleting a file twice is harmless. Rows are first due
